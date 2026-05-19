@@ -27,6 +27,10 @@ static const hsiphash_key_t hkey = {
 	.key = { 0x03020100U, 0x07060504U },
 };
 
+static const siphash_key_t skey = {
+	.key = { 0x0706050403020100ULL, 0x0f0e0d0c0b0a0908ULL },
+};
+
 static void fill_test_buffer(u8 *buf, int len)
 {
 	int i;
@@ -61,7 +65,7 @@ static int run_jhash2_bench(u8 *buf)
 	start = rdtsc_ordered();
 
 	for (i = 0; i < iterations; i++) {
-		result = jhash2((const u32 *)buf, words, seed + i);
+		result = jhash2((const u32 *)buf, words, seed);
 		acc += result;
 	}
 
@@ -127,6 +131,55 @@ static int run_hsiphash_bench(u8 *buf)
 	return 0;
 }
 
+static int run_siphash_bench(u8 *buf)
+{
+	u64 start, end, total;
+	u64 avg_x100;
+	u64 acc = 0;
+	u64 h;
+	u32 folded;
+	unsigned long i;
+
+	if (input_len <= 0) {
+		pr_err("hash_microbench: input_len must be positive\n");
+		return -EINVAL;
+	}
+
+	if (iterations == 0) {
+		pr_err("hash_microbench: iterations must be greater than 0\n");
+		return -EINVAL;
+	}
+
+	preempt_disable();
+	start = rdtsc_ordered();
+
+	for (i = 0; i < iterations; i++) {
+		h = siphash(buf, input_len, &skey);
+
+		/* Fold SipHash to OVS's 32-bit hash format; include folding cost. */
+		folded = (u32)h ^ (u32)(h >> 32);
+
+		acc += folded;
+	}
+
+	end = rdtsc_ordered();
+	preempt_enable();
+
+	hash_sink += acc;
+	total = end - start;
+	avg_x100 = div64_u64(total * 100, iterations);
+
+	pr_info("hash_microbench: siphash input_len=%d iterations=%lu total_cycles=%llu cycles_per_hash=%llu.%02llu sink=%llu\n",
+		input_len,
+		iterations,
+		total,
+		avg_x100 / 100,
+		avg_x100 % 100,
+		hash_sink);
+
+	return 0;
+}
+
 static int __init hash_microbench_init(void)
 {
 	u8 *buf;
@@ -155,8 +208,7 @@ static int __init hash_microbench_init(void)
 		ret = run_hsiphash_bench(buf);
 		break;
 	case 2:
-		pr_err("hash_microbench: hash_type=2 (siphash) is not implemented in v4\n");
-		ret = -EINVAL;
+		ret = run_siphash_bench(buf);
 		break;
 	default:
 		pr_err("hash_microbench: invalid hash_type=%d\n", hash_type);
