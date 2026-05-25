@@ -1,134 +1,509 @@
 # hash_microbench — Dev Notes
 
-對應計畫：`C:\Users\itlab\.claude\plans\linux-foamy-toucan.md`
-專案位置：`D:\kernel-hash\hash_microbench\`
+## Project status
 
-## 檔案
+本專案目前完成 **Experiment 1: Linux kernel hash function microbenchmark**。
 
-| 檔案 | 用途 |
-|------|------|
-| `Makefile` | out-of-tree Kbuild stub |
-| `hash_microbench.c` | 模組本體：載入時跑 `iterations` 次 hash，用 `get_cycles()` 量 cycles，印到 `dmesg` |
-| `run_all.sh` | 5 × 3 × 5 = 75 次 `insmod`/`rmmod` 迴圈，外加 `perf stat` 抓 HW counter |
-| `parse_results.py` | 合併 in-kernel cycles + 外部 perf，產 summary 表 + 4 張 PNG |
-| `.gitignore` | 排除 build artifacts |
+本階段目標是在修改 OVS datapath 前，先建立 Linux kernel hash function 本身的成本模型。實驗直接在 loadable kernel module 中重複執行 `jhash2()`、`hsiphash()` 與 `siphash()`，並量測不同 input length 下的：
 
-## 一次性傳檔到 Linux box
+* cycles per hash
+* instructions per hash
+* branch misses per hash
+* cache misses per hash
 
-從 Windows 開 PowerShell（或 git bash）：
-```powershell
-scp -r D:\kernel-hash\hash_microbench user@lab-box:~/
-ssh user@lab-box
+目前正式結果採用 **v8 grouped perf benchmark**：
+
+```text
+Hash functions: jhash2, hsiphash, siphash
+Input lengths: 16, 32, 64, 128, 256 bytes
+Iterations: 10,000,000 per run
+Repeats: 10
+Perf event groups:
+  core   = cycles,instructions
+  branch = branches,branch-misses
+  cache  = cache-references,cache-misses
 ```
 
-或者用 git：
-```powershell
-cd D:\kernel-hash
-git init; git add hash_microbench; git commit -m "exp1 v1"
-# push 到任何 remote，然後 lab box 上 git clone
+使用 event grouping 的原因是避免一次量測過多 perf events 造成 hardware counter multiplexing。先前一次量測六個 events 時，perf output 中出現約 66%–83% counted percentage；分組量測後，raw log 中可觀察到 measured events 的 counted percentage 為 `100.00`，因此 v8 結果作為正式分析版本。
+
+---
+
+## Files
+
+| File                                                         | Purpose                                                                                                           |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `Makefile`                                                   | out-of-tree kernel module Kbuild stub                                                                             |
+| `hash_microbench.c`                                          | kernel module body; runs selected hash function in `module_init()` and prints in-kernel timing results to `dmesg` |
+| `scripts/run_bench.sh`                                       | earlier cycles/hash automation script                                                                             |
+| `scripts/parse_results.py`                                   | parses earlier v6 log into CSV                                                                                    |
+| `scripts/summarize_results.py`                               | summarizes earlier v6 cycles/hash results                                                                         |
+| `scripts/run_perf_grouped.sh`                                | v8 formal grouped perf benchmark script                                                                           |
+| `scripts/summarize_perf_grouped.py`                          | summarizes v8 grouped perf CSV into pivot tables                                                                  |
+| `results/v8_perf_grouped_*.raw.log`                          | raw perf stat + dmesg output                                                                                      |
+| `results/v8_perf_grouped_*.csv`                              | structured grouped perf result                                                                                    |
+| `results/v8_perf_grouped_*_pivot_cycles_per_hash.csv`        | cycles/hash pivot table                                                                                           |
+| `results/v8_perf_grouped_*_pivot_instructions_per_hash.csv`  | instructions/hash pivot table                                                                                     |
+| `results/v8_perf_grouped_*_pivot_branch_misses_per_hash.csv` | branch-misses/hash pivot table                                                                                    |
+| `results/v8_perf_grouped_*_pivot_cache_misses_per_hash.csv`  | cache-misses/hash pivot table                                                                                     |
+| `.gitignore`                                                 | excludes kernel build artifacts and temporary files                                                               |
+
+---
+
+## Environment
+
+```bash
+uname -a
+cat /etc/os-release
+lscpu | grep "Model name"
+gcc --version | head -1
 ```
 
-## Linux box 上的步驟
+Current test environment:
 
-### 1. 環境檢查
-```sh
-uname -r
-zcat /proc/config.gz 2>/dev/null \
-    | grep -E '^CONFIG_(X86_TSC|PERF_EVENTS|HW_PERF_EVENTS|MODULES|MODULE_UNLOAD)=' \
-    || grep -E '^CONFIG_(X86_TSC|PERF_EVENTS|HW_PERF_EVENTS|MODULES|MODULE_UNLOAD)=' \
-       /boot/config-$(uname -r)
-dpkg -l | grep -q linux-headers-$(uname -r) \
-    || sudo apt install -y linux-headers-$(uname -r)
-which perf || sudo apt install -y linux-tools-$(uname -r) linux-tools-common
-python3 -c "import pandas, matplotlib" || sudo apt install -y python3-pandas python3-matplotlib
-```
+| Item               | Value                                  |
+| ------------------ | -------------------------------------- |
+| OS                 | Ubuntu 22.04.5 LTS                     |
+| Kernel             | Linux 6.8.0-111-generic                |
+| Architecture       | x86_64                                 |
+| CPU                | Intel Core i5-10500 @ 3.10GHz          |
+| Compiler           | GCC 12.3.0                             |
+| Module type        | out-of-tree loadable kernel module     |
+| Main timing method | `rdtsc_ordered()` inside kernel module |
+| External counters  | `perf stat`                            |
 
-### 2. Build
-```sh
-cd ~/hash_microbench
+---
+
+## Build
+
+```bash
+make clean
 make
 ls -l hash_microbench.ko
-modinfo hash_microbench.ko | head -n 15      # should show MODULE_LICENSE("GPL")
+modinfo hash_microbench.ko | head -n 15
 ```
 
-### 3. Smoke test — single load
-```sh
+Expected result:
+
+```text
+hash_microbench.ko is generated
+MODULE_LICENSE should be GPL
+```
+
+The following build messages are acceptable:
+
+```text
+warning: the compiler differs from the one used to build the kernel
+Skipping BTF generation ... due to unavailability of vmlinux
+```
+
+They do not indicate build failure.
+
+---
+
+## Smoke test
+
+### jhash2
+
+```bash
 sudo dmesg -C
 sudo insmod ./hash_microbench.ko hash_type=0 input_len=64 iterations=1000000
-sudo dmesg | tail
 sudo rmmod hash_microbench
+sudo dmesg | grep "hash_microbench:"
 ```
 
-預期 `dmesg` 輸出（數字會浮動）：
+### hsiphash
+
+```bash
+sudo dmesg -C
+sudo insmod ./hash_microbench.ko hash_type=1 input_len=64 iterations=1000000
+sudo rmmod hash_microbench
+sudo dmesg | grep "hash_microbench:"
 ```
-hash_microbench: hash=jhash2 input_len=64 iterations=1000000 total_cycles=35421080 cycles_per_hash=35 checksum=0xabcdef01
-HMB,jhash2,64,1000000,35421080,35,0xabcdef01
+
+### siphash
+
+```bash
+sudo dmesg -C
+sudo insmod ./hash_microbench.ko hash_type=2 input_len=64 iterations=1000000
+sudo rmmod hash_microbench
+sudo dmesg | grep "hash_microbench:"
+```
+
+Expected output format:
+
+```text
+hash_microbench: loaded
+hash_microbench: hash_type=0 input_len=64 iterations=1000000
+hash_microbench: jhash2 input_len=64 iterations=1000000 total_cycles=... cycles_per_hash=... sink=...
 hash_microbench: unloaded
 ```
 
-Sanity check 範圍（@ 3 GHz）：
-- `jhash2`  64 B：30 – 60 cyc / hash
-- `hsiphash` 64 B：80 – 150 cyc / hash
-- `siphash` 64 B：120 – 250 cyc / hash
+---
 
-差太多（10× 以上）代表 hash 被 inline 量到 0，或 `get_cycles()` 在 VM 上不穩。
+## Module parameters
 
-### 4. 全部跑完
-```sh
-chmod +x run_all.sh
-sudo ./run_all.sh
+| Parameter     | Meaning                                          |
+| ------------- | ------------------------------------------------ |
+| `hash_type=0` | run `jhash2()`                                   |
+| `hash_type=1` | run `hsiphash()`                                 |
+| `hash_type=2` | run `siphash()` and fold 64-bit output to 32-bit |
+| `input_len`   | input buffer length in bytes                     |
+| `iterations`  | number of hash loop iterations                   |
+
+---
+
+## Hash implementation details
+
+### jhash2
+
+`jhash2()` takes a `const u32 *` input and its length is measured in 32-bit words, not bytes. Therefore:
+
+```c
+words = input_len / sizeof(u32);
+result = jhash2((const u32 *)buf, words, seed);
 ```
 
-預估耗時：~5 分鐘。輸出在 `results/`：
-- `dmesg.csv`  — in-kernel cycles 每次 trial 一行
-- `perf.csv`   — 外部 perf HW counter 每次 trial 一行
-- `perf_raw/`  — 每次 trial 的 raw perf output（debug 用）
+The benchmark requires `input_len` to be a positive multiple of 4.
 
-可調環境變數：
-```sh
-sudo REPEATS=3 ITER=5000000 ./run_all.sh
+### hsiphash
+
+`hsiphash()` takes a byte buffer and byte length:
+
+```c
+result = hsiphash(buf, input_len, &hkey);
 ```
 
-### 5. 整理 + 圖
-```sh
-python3 parse_results.py
-ls results/
+It returns a 32-bit hash value.
+
+### siphash
+
+`siphash()` returns a 64-bit value, while the OVS-like hash interface uses a 32-bit value. Therefore the benchmark folds the high and low 32-bit halves:
+
+```c
+u64 h = siphash(buf, input_len, &skey);
+
+/* Fold SipHash to OVS's 32-bit hash format; include folding cost. */
+u32 folded = (u32)h ^ (u32)(h >> 32);
 ```
 
-會產出：
-- `summary.csv` / `summary.md` — 三 hash × 五 size 的 median table
-- `fig_cycles_vs_size.png` — 主圖（HackMD 用這張）
-- `fig_ins_per_hash_64.png` / `fig_brmiss_per_hash_64.png` / `fig_cmiss_per_hash_64.png` — 64 B 切片
+The folding cost is included in the timed region because it represents the practical conversion cost if SipHash is used in a 32-bit hash path.
 
-把 `summary.md` 內容貼進 HackMD 第一檢核點的表格；`fig_cycles_vs_size.png` 是文末那張圖。
+---
 
-## 常見錯誤對照表
+## Timing design
 
-| 徵狀 | 原因 | 修法 |
-|------|------|------|
-| `make: *** No rule to make target 'modules'` | KDIR 或 headers 沒裝 | `sudo apt install linux-headers-$(uname -r)` |
-| `Makefile:NN: *** missing separator. Stop.` | 編輯器把 TAB 換成空格 | 用 `cat -A Makefile` 確認行首是 `^I`（TAB）不是空格 |
-| `insmod: ERROR: could not insert module: Unknown symbol` | 沒寫 `MODULE_LICENSE("GPL")` 或寫成 "GPL v2" | C 檔末尾必須是 `MODULE_LICENSE("GPL");` |
-| `insmod: ERROR: Operation not permitted` | Secure Boot 阻擋未簽章模組 | BIOS 關 Secure Boot，或 enroll MOK 簽章模組 |
-| `cycles_per_hash=0` 或 `=1` | 編譯器把 hash 整段 inline + DCE | 確認 `do_jhash2` 有 `noinline`；`objdump -d hash_microbench.ko \| grep do_jhash2` 應該看到 `call` |
-| 連跑兩次 `cycles_per_hash` 差 > 5% | CPU 頻率沒鎖、turbo 在跳、SMT sibling 在搶 | `sudo cpupower frequency-set -g performance`；BIOS 關 turbo；`taskset -c <isol_cpu>` |
-| `perf stat: <not supported>` | hypervisor 沒透傳 HW counter | VM 改 host-passthrough；fallback：先看 in-kernel cycles，HW counter 之後再補 |
-| `dmesg` 看不到 `HMB,` 行 | `dmesg -C` 之後 `insmod` 失敗了 | `dmesg | tail`，找 OOPS / EINVAL 訊息 |
+The kernel module measures the hash loop using one timing window:
 
-## 設計上的取捨
+```c
+start = rdtsc_ordered();
 
-1. **單一 .c 檔**：照你筆記的 V1 結構，沒拆 `hash_bench_perf.c`。HW counter 走外部 `perf stat` 而不是 in-kernel `perf_event_create_kernel_counter` — 簡單、不會踩 KVM 透傳問題。代價：perf 是系統範圍量測，hash loop 必須夠長到 dominate，這就是為什麼 `iterations` 預設 10M。
+for (i = 0; i < iterations; i++) {
+    result = hash(...);
+    acc += result;
+}
 
-2. **SipHash XOR-fold**：照你筆記 `(u32)h ^ (u32)(h >> 32)`，這層成本算進計時。否則 SipHash 多出來的 32-bit output bandwidth 不能跟 jhash2/hsiphash 公平比。
+end = rdtsc_ordered();
+```
 
-3. **`hash_type=0` jhash2 用 seed=0**：和 `net/openvswitch/flow_table.c` 的 `flow_hash()` 一致，後續 Exp 3 攻擊面分析時這個假設才連得起來。
+Then:
 
-4. **單次 timing window 涵蓋整個 10M loop**（不是每個 iter 一次 `get_cycles()`）：`get_cycles()` 自己有 ~30 cyc 成本，攤到 10M iter 上趨近 0；中間穿插 `get_cycles()` 反而會搞亂量測。換成「總 cycles ÷ iterations」是 V1 最乾淨的做法。
+```text
+total_cycles = end - start
+cycles_per_hash = total_cycles / iterations
+```
 
-5. **沒實作 KUnit**：你筆記 V2 才需要。V1 用 module 比較好控變因。
+Interpretation:
 
-## 之後幾天的計畫摘要
+```text
+iterations = number of hash function calls
+total_cycles = total CPU cycles consumed by the whole hash loop
+cycles_per_hash = average CPU cycles per hash call
+```
 
-- **Day 2 (現在)**：跑完 `run_all.sh`，貼 summary 表 + 圖到 HackMD
-- **Day 3-5**：寫分析報告（cycles / byte 線性回歸、HashDoS 鋪陳）
-- **Week 2 起**：Exp 3 (bucket distribution) 跟 Exp 2 (datapath benchmark)
+Example:
+
+```text
+iterations = 10,000,000
+total_cycles = 626,940,594
+cycles_per_hash = 626,940,594 / 10,000,000 = 62.69
+```
+
+This means:
+
+```text
+The benchmark called the hash function 10,000,000 times.
+These 10,000,000 calls consumed 626,940,594 CPU cycles in total.
+On average, each hash call consumed about 62.69 cycles.
+```
+
+The timing window includes:
+
+```text
+hash function call
+loop control
+local accumulator update
+```
+
+It does not include:
+
+```text
+module loading
+kmalloc
+buffer initialization
+pr_info output
+rmmod
+```
+
+---
+
+## Full grouped perf benchmark
+
+Run the formal v8 benchmark:
+
+```bash
+chmod +x scripts/run_perf_grouped.sh
+make clean
+make
+./scripts/run_perf_grouped.sh
+```
+
+Formal v8 matrix:
+
+```text
+Hash functions: jhash2, hsiphash, siphash
+Input lengths: 16, 32, 64, 128, 256 bytes
+Iterations: 10,000,000
+Repeats: 10
+Event groups:
+  core   = cycles,instructions
+  branch = branches,branch-misses
+  cache  = cache-references,cache-misses
+```
+
+Total number of perf runs:
+
+```text
+3 hash functions × 5 input lengths × 10 repeats × 3 event groups = 450 runs
+```
+
+Outputs:
+
+```text
+results/v8_perf_grouped_<timestamp>.raw.log
+results/v8_perf_grouped_<timestamp>.csv
+```
+
+---
+
+## Summarize v8 results
+
+```bash
+chmod +x scripts/summarize_perf_grouped.py
+
+./scripts/summarize_perf_grouped.py \
+  results/v8_perf_grouped_<timestamp>.csv \
+  results/v8_perf_grouped_<timestamp>
+```
+
+This produces:
+
+```text
+results/v8_perf_grouped_<timestamp>_cycles_summary.csv
+results/v8_perf_grouped_<timestamp>_instructions_summary.csv
+results/v8_perf_grouped_<timestamp>_branch_misses_summary.csv
+results/v8_perf_grouped_<timestamp>_cache_misses_summary.csv
+
+results/v8_perf_grouped_<timestamp>_pivot_cycles_per_hash.csv
+results/v8_perf_grouped_<timestamp>_pivot_instructions_per_hash.csv
+results/v8_perf_grouped_<timestamp>_pivot_branch_misses_per_hash.csv
+results/v8_perf_grouped_<timestamp>_pivot_cache_misses_per_hash.csv
+```
+
+---
+
+## Current v8 summary
+
+### module cycles per hash
+
+| Input length |  jhash2 | hsiphash | siphash |
+| -----------: | ------: | -------: | ------: |
+|           16 |  16.712 |   28.554 |  45.376 |
+|           32 |  26.869 |   38.341 |  64.480 |
+|           64 |  61.426 |   57.203 | 101.947 |
+|          128 | 119.872 |   95.860 | 174.763 |
+|          256 | 249.810 |  171.048 | 324.874 |
+
+### instructions per hash
+
+| Input length |   jhash2 | hsiphash |   siphash |
+| -----------: | -------: | -------: | --------: |
+|           16 |  83.3841 | 148.3923 |  207.4183 |
+|           32 | 118.3891 | 190.4117 |  279.4423 |
+|           64 | 235.4635 | 274.4387 |  423.5020 |
+|          128 | 422.5506 | 442.5090 |  711.6016 |
+|          256 | 843.7541 | 778.6210 | 1287.8416 |
+
+### branch misses per hash
+
+| Input length |   jhash2 | hsiphash |  siphash |
+| -----------: | -------: | -------: | -------: |
+|           16 | 0.001924 | 0.002005 | 0.002126 |
+|           32 | 0.001985 | 0.002163 | 0.002212 |
+|           64 | 0.002653 | 0.002183 | 0.002759 |
+|          128 | 0.003056 | 0.002452 | 0.003606 |
+|          256 | 0.003757 | 0.003457 | 0.004906 |
+
+### cache misses per hash
+
+| Input length |   jhash2 | hsiphash |  siphash |
+| -----------: | -------: | -------: | -------: |
+|           16 | 0.008311 | 0.008926 | 0.009173 |
+|           32 | 0.009374 | 0.009937 | 0.009592 |
+|           64 | 0.008803 | 0.009353 | 0.010399 |
+|          128 | 0.010604 | 0.010418 | 0.010648 |
+|          256 | 0.011192 | 0.010811 | 0.011560 |
+
+---
+
+## Checking perf counted percentage
+
+Because `run_perf_grouped.sh` uses:
+
+```bash
+perf stat -x,
+```
+
+the raw perf output is CSV-like.
+
+Example:
+
+```text
+230073315,,cycles,64014526,100.00,,
+```
+
+Field meaning:
+
+| Field |       Value | Meaning            |
+| ----- | ----------: | ------------------ |
+| 1     | `230073315` | event count        |
+| 3     |    `cycles` | event name         |
+| 5     |    `100.00` | counted percentage |
+
+Check all events:
+
+```bash
+awk -F, '
+$3=="cycles" || $3=="instructions" || $3=="branches" || $3=="branch-misses" || $3=="cache-references" || $3=="cache-misses" {
+    print $3, $5
+}' results/v8_perf_grouped_<timestamp>.raw.log | sort | uniq -c
+```
+
+Find events that are not counted at 100%:
+
+```bash
+awk -F, '
+($3=="cycles" || $3=="instructions" || $3=="branches" || $3=="branch-misses" || $3=="cache-references" || $3=="cache-misses") && $5!="100.00" {
+    print $0
+}' results/v8_perf_grouped_<timestamp>.raw.log | head -50
+```
+
+If this prints nothing, the measured events were counted at `100.00%`.
+
+---
+
+## grep and awk notes
+
+### grep
+
+`grep` searches lines that contain a given string.
+
+This command is too broad:
+
+```bash
+grep "cycles" results/v8_perf_grouped_<timestamp>.raw.log | head -20
+```
+
+It matches both perf event lines:
+
+```text
+230073315,,cycles,64014526,100.00,,
+```
+
+and dmesg lines:
+
+```text
+hash_microbench: jhash2 input_len=16 ... total_cycles=... cycles_per_hash=...
+```
+
+To match only perf `cycles` event lines:
+
+```bash
+grep ",,cycles," results/v8_perf_grouped_<timestamp>.raw.log | head -20
+```
+
+### awk
+
+`awk -F,` treats each line as comma-separated fields.
+
+For perf CSV-like output:
+
+```text
+230073315,,cycles,64014526,100.00,,
+```
+
+* `$1` = event count
+* `$3` = event name
+* `$5` = counted percentage
+
+Example:
+
+```bash
+awk -F, '$3=="cycles" {print $1, $3, $5}' results/v8_perf_grouped_<timestamp>.raw.log | head
+```
+
+---
+
+## Analysis summary
+
+1. `siphash` has the highest cycles/hash across all input lengths.
+2. `siphash` also has the highest instructions/hash, supporting the interpretation that its higher cost mainly comes from heavier computation.
+3. `branch_misses_per_hash` remains very low across all three hash functions, so branch prediction is not the main differentiating factor.
+4. `cache_misses_per_hash` is also similar across the three hash functions, likely because the input buffer is small and repeatedly reused.
+5. `hsiphash` has lower cycles/hash than `jhash2` for longer inputs in this benchmark. This should be reported as an observation, not as a universal conclusion, because cycles are affected by instruction-level parallelism, pipeline behavior, compiler implementation path, and CPU execution characteristics.
+
+---
+
+## Report-ready conclusion
+
+```text
+The grouped perf results show that SipHash has the highest cycles/hash and instructions/hash across all tested input lengths. Branch misses and cache misses remain low and similar among jhash2, HalfSipHash, and SipHash. Therefore, in this microbenchmark, the main performance difference is better explained by instruction count and hash computation complexity rather than branch prediction failure or cache locality.
+```
+
+---
+
+## Common issues
+
+| Symptom                                                           | Cause                                                | Fix                                                                       |
+| ----------------------------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------- |
+| `make: *** No rule to make target 'modules'`                      | missing kernel headers                               | `sudo apt install linux-headers-$(uname -r)`                              |
+| `Makefile:NN: *** missing separator. Stop.`                       | Makefile uses spaces instead of TAB                  | use `cat -A Makefile` to check for `^I`                                   |
+| `insmod: ERROR: could not insert module: Operation not permitted` | Secure Boot blocks unsigned module                   | disable Secure Boot or sign module with MOK                               |
+| `perf stat: No permission to enable cycles event`                 | perf permission restriction                          | check `/proc/sys/kernel/perf_event_paranoid`; lower temporarily if needed |
+| perf counted percentage is 66%–83%                                | too many events measured at once; multiplexing       | use grouped perf measurement                                              |
+| `grep "cycles"` shows both perf and dmesg lines                   | pattern too broad                                    | use `grep ",,cycles,"` or `awk -F, '$3=="cycles"'`                        |
+| `failed to create output file` from perf `-o`                     | perf cannot open temp output file under sudo context | redirect stderr with `2> "$perf_tmp"` instead of using `-o`               |
+
+---
+
+## Current status
+
+| Version | Purpose                                             | Result                                                                                                       |
+| ------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| v1      | minimal module lifecycle                            | `loaded / unloaded` success                                                                                  |
+| v2      | module parameters                                   | `hash_type / input_len / iterations` printed correctly                                                       |
+| v3      | `jhash2()` benchmark                                | printed `total_cycles / cycles_per_hash / sink`                                                              |
+| v4      | `hsiphash()` benchmark                              | `hash_type=1` works                                                                                          |
+| v5      | `siphash()` benchmark with 64-bit to 32-bit folding | `hash_type=2` works                                                                                          |
+| v6      | automated cycles/hash benchmark                     | completed 3 hashes × 5 input lengths × 5 repeats                                                             |
+| v7      | initial perf counter benchmark                      | collected perf counters, but earlier version still risked multiplexing                                       |
+| v8      | grouped perf counter benchmark                      | completed 3 hashes × 5 input lengths × 10 repeats × 3 event groups; raw log shows 100.00% counted percentage |
