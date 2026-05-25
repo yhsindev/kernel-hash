@@ -280,19 +280,3 @@ Therefore, in this microbenchmark, the main performance difference is better exp
 * Implement OVS flow hash replacement path.
 * Evaluate OVS datapath throughput, CPU usage, and lookup behavior.
 * Analyze bucket distribution and collision behavior.
-
-````
-
-接著做：
-
-```bash
-git status
-git add README.md
-git add scripts/run_perf_grouped.sh scripts/summarize_perf_grouped.py
-git add results/v8_perf_grouped_20260525_141508.csv
-git add results/v8_perf_grouped_20260525_141508.raw.log
-git add results/v8_perf_grouped_20260525_141508_*summary.csv
-git add results/v8_perf_grouped_20260525_141508_*pivot*.csv
-git commit -m "Document grouped perf benchmark results"
-git push
-````
