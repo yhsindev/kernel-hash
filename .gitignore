@@ -18,3 +18,7 @@ perf.data.old
 slides/node_modules/
 slides/dist/
 slides/.slidev/
+
+# Python bytecode cache
+__pycache__/
+*.pyc
