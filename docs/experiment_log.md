@@ -81,3 +81,89 @@
 - **Case D-v2 構想**：擴大 port pair 空間（如 100×100 = 10 000），測 megaflow 規模 → `flow_hash()` 桶/碰撞分佈的關係。可選 (a) 加 ns3 並用兩個 output port 取代 drop，看 action 平衡是否影響行為；(b) 純擴 rule density 觀察 `flow-limit` 是否觸發 dynamic eviction。
 - 跑核心 deliverable：clone kernel source、修改 `net/openvswitch/flow_table.c::flow_hash()` 切換 jhash2 / hsiphash / siphash，於 Case D-v1 baseline 上比較 throughput / cycles / 碰撞分佈。
 - 今日對 `pktgen_microflows.sh` / `send_microflows.py` 的修改 commit 進 git；更新 `ovs_datapath_bench/README.md` 加入 Case A→D runbook。
+
+
+## 2026-06-04 — Check-in：Case D-v2 port-pair workload
+
+### 今日方向
+- 將 Case D-v1 從固定 `50 × 10 = 500` port pairs，改成可參數化的 D-v2 workload。
+- 先跑 D-v2-small：`100 × 20 = 2,000` port pairs。
+- 若 small 穩定，再放大到 D-v2-mid：`200 × 50 = 10,000` port pairs。
+- 今日暫不加入 ns3，先沿用 output/drop rules，降低拓樸變因。
+
+### 為什麼做這一步
+- D-v1 已證明 port-sensitive rules 能讓 UDP port pair 進入 datapath flows。
+- 但 D-v1 只有約 `442` flows，`hit/pkt ≈ 1.07`，比較像 flow-entry diversity workload，還不是高 lookup pressure workload。
+- D-v2 目標是測試更大的 port-pair key space 是否會提高 flows、影響 d_hit / d_missed / masks / hit-pkt。
+
+### 先做的事
+1. 參數化 `install_irregular_udp_rules.sh`。
+2. 跑 D-v2-small。
+3. 保存 `ovs-dpctl show`、`dump-flows`、`dump-flows -m`、`ovs-ofctl dump-flows`。
+4. 視結果決定是否今天推進 D-v2-mid。
+
+### 今日成功標準
+- 完成可參數化 rules script。
+- 至少完成 D-v2-small 一次有效 run。
+- 能初步比較 D-v1 與 D-v2-small 的 flows / masks / hit-pkt / d_hit / d_missed。
+
+### 今日結果補充：NORMAL same-range baseline
+
+使用與 D-v2-mid 相同的 pktgen range：
+
+- UDP source port：`20000–20199`
+- UDP destination port：`9000–9049`
+- 理論 port pairs：`200 × 50 = 10,000`
+- OpenFlow rules：`priority=0,actions=NORMAL`
+
+觀察結果顯示，NORMAL forwarding 下 OVS datapath flows 僅維持在 `2–4` 條，masks 約為 `1–2`，`hit/pkt ≈ 1.03`。`dump-flows` 顯示主要為兩個方向的 IPv4 forwarding flows，而非 UDP port-specific flows。
+
+此結果與 D-v2-mid 形成明確對照：同樣的 10,000 port-pair traffic，在 NORMAL forwarding 下會被 OVS megaflow cache 合併；而 D-v2-mid 透過 port-sensitive irregular OpenFlow rules，可產生約 `9,752–9,754` 條 UDP-specific datapath flows。因此，D-v2-mid 可定位為 controlled flow-entry diversity workload，用於後續觀察大量 UDP-specific datapath flows 下的 hash lookup 行為。
+
+限制：兩組實驗的 `hit/pkt` 仍接近 1，代表目前 workload 主要放大 flow table working set，而非 multi-mask lookup pressure。
+
+---
+
+## 2026-06-04 — Check-out：Case D-v2 port-pair workload
+
+### 今日目標
+- 將 Case D-v1 的固定 `50×10 = 500` port pairs，改成可參數化的 D-v2 workload。
+- 測試 D-v2-small (`100×20 = 2,000`) 與 D-v2-mid (`200×50 = 10,000`)。
+- 補一組 `normal_same_range` baseline，確認同樣 pktgen traffic 在 NORMAL forwarding 下是否會自然產生大量 UDP-specific flows。
+
+### 今日操作
+- 新增 `install_irregular_udp_rules.sh`：
+  - 支援 `SRCMIN/SRCMAX/DSTMIN/DSTMAX/OUTPUT_PORT` 參數化。
+  - 會動態解析 OpenFlow port number，避免 hardcode output port。
+  - 使用 `ovs-ofctl add-flows -` 批次安裝 rules。
+  - 加入 rule 數量 safety stop 與 port range 檢查。
+
+- 完成三組實驗：
+  - `normal_same_range`：同樣使用 `200×50` port range，但只套 `NORMAL` rule。
+  - `case_d_v2_small`：`100×20 = 2,000` rules。
+  - `case_d_v2_mid`：`200×50 = 10,000` rules。
+
+### 觀察結果
+
+| Case | Rules | Port pairs | flows | masks | hit/pkt | pktgen pps | 初步解讀 |
+|---|---:|---:|---:|---:|---:|---:|---|
+| normal_same_range | NORMAL only | 10,000 | 2–4 | 1–2 | ~1.03 | ~507K | NORMAL 會把 port variation 合併成少數 megaflows |
+| D-v2-small | 2,000 | 2,000 | ~1,882 | 2–3 | ~1.04–1.06 | ~721K | port-sensitive rules 可穩定放大 UDP flow entries |
+| D-v2-mid | 10,000 | 10,000 | ~9,752 | 2–3 | ~1.03–1.04 | ~652K | 成功建立接近 10k UDP-specific datapath flows |
+
+### 目前判斷
+- D-v2-mid 的價值在於：同樣的 `200×50` traffic，在 NORMAL 下只有 `2–4` 條 flows；套 port-sensitive rules 後可產生約 `9.7k` 條 UDP-specific datapath flows。
+- 這表示 D-v2-mid 可以作為 controlled flow-entry diversity workload，用來觀察大量 UDP-specific datapath flows 下的 lookup 行為。
+- `hit/pkt` 仍接近 1，代表目前 workload 主要放大 flow table working set，而不是 multi-mask lookup pressure。
+- D-v2-mid 有觀察到 `lost` counter，需要後續正式 run 用 before/after delta 再確認，暫時不直接解讀成明確瓶頸。
+- D-v2-mid 不是 production-like workload，而是 controlled workload；後續若要更貼近 forwarding throughput，可再設計 D-v3，例如多 output port、避免 drop path。
+
+### 今日結論
+- D-v2 workload 設計成立：rules 規模從 2k 放大到 10k 時，observed flows 也跟著接近線性放大。
+- NORMAL baseline 補足後，D-v2-mid 的實驗意義更清楚：大量 UDP-specific flows 主要由 OpenFlow rules 設計造成，而不是 packet variety 自然造成。
+- 目前可以把 D-v2-mid 作為後續 `flow_hash()` 替換實驗的第一版 controlled workload，但不能過度解讀為一般 OVS production 場景。
+
+### 下一步
+- 整理 result files，確認 `normal_same_range / case_d_v2_small / case_d_v2_mid` 都有保存 `pktgen_output`、`dpctl_show`、`dump-flows`、`dump-flows -m`、`ofctl_dump_flows`。
+- 下一階段開始看 Linux 6.8 `net/openvswitch/flow_table.c::flow_hash()`。
+- 第一版修改範圍先限定在 `flow_hash()`，暫不動 `find_bucket()`、`ufid_hash()` 或 mask cache 相關 path。
