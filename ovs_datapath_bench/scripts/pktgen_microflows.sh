@@ -72,10 +72,10 @@ DST_MAC="${DST_MAC:-02:00:00:00:00:02}"
 ip netns exec "$NETNS" ip link set "$DEV" up
 
 echo "pktgen config:"
-echo "  netns=$NETNS dev=$DEV  $SRC_IP -> $DST_IP:$DST_PORT (mac $DST_MAC)"
-echo "  udp src port: $SRCMIN-$SRCMAX (random)  pkt_size=$PKT_SIZE"
-echo "  count=$COUNT duration=${DURATION}s"
-echo
+echo "  netns=$NETNS dev=$DEV  $SRC_IP -> $DST_IP (mac $DST_MAC)"
+echo "  udp src port: $SRCMIN-$SRCMAX (random)"
+echo "  udp dst port: $DSTMIN-$DSTMAX $([[ "$DSTMAX" -ne "$DSTMIN" ]] && echo "(random)" || echo "(fixed)")"
+echo "  pkt_size=$PKT_SIZE count=$COUNT duration=${DURATION}s"
 
 # Configure the device on thread 0. clone_skb=0 forces a fresh skb per packet so
 # UDPSRC_RND (and UDPDST_RND when enabled) actually varies the port on every packet.
