@@ -1,0 +1,11 @@
+system@ovs-system:
+  lookups: hit:227936699 missed:127748 lost:43856
+  flows: 2
+  masks: hit:235201183 total:1 hit/pkt:1.03
+  cache: hit:23169236 hit-rate:10.16%
+  caches:
+    masks-cache: size:256
+  port 0: ovs-system (internal)
+  port 1: br0 (internal)
+  port 2: veth1-br
+  port 3: veth2-br
