@@ -167,3 +167,108 @@
 - 整理 result files，確認 `normal_same_range / case_d_v2_small / case_d_v2_mid` 都有保存 `pktgen_output`、`dpctl_show`、`dump-flows`、`dump-flows -m`、`ofctl_dump_flows`。
 - 下一階段開始看 Linux 6.8 `net/openvswitch/flow_table.c::flow_hash()`。
 - 第一版修改範圍先限定在 `flow_hash()`，暫不動 `find_bucket()`、`ufid_hash()` 或 mask cache 相關 path。
+
+## 2026-06-05 — Check-in：flow_hash() patch first pass
+### 今日方向
+- 6/4 已完成 D-v2-mid controlled workload 與 NORMAL baseline。
+- 今日開始進入 `net/openvswitch/flow_table.c::flow_hash()` 修改前準備與最小 patch。
+- 目標不是完成正式效能比較，而是找出 build / key / alignment / reload 的工程困難點。
+
+### 今日任務
+1. 確認 kernel 與 openvswitch module 狀態。
+2. 找到 Linux 6.8 source tree（先用 /lib/modules/$(uname -r)/build 路徑或 Ubuntu linux-source 套件）與 flow_table.c。
+3. 明確限定第一版範圍：只改 flow_hash()。
+4. 設計 compile-time hash selection 機制（只決定 #define 結構，code 還沒寫）。
+5a. 用 unmodified flow_table.c 跑通 out-of-tree module rebuild → unload/reload → 短 traffic sanity。
+5b. 若 5a 通過：加 hash selection #define skeleton，保留 jhash 為 default 可 build。
+#define OVS_FLOW_HASH_JHASH 1
+#define OVS_FLOW_HASH_HSIPHASH 0
+#define OVS_FLOW_HASH_SIPHASH 0
+6. 若 5b 通過：用 D-v2-mid 跑 sanity（只驗 module 載入後 datapath 仍通，不比效能）。
+
+### 今日不做
+- 不做 D-v2-large。
+- 不加入 ns3。
+- 不改 find_bucket() / ufid_hash() / mask cache。
+- 不今天就 build 出 siphash / hsiphash 變體。
+- 不做 runtime switching / module_param / sysctl 機制。
+- 不做 cross-hash function 數據對照。
+- 不改 OVS userspace。
+
+### 今日成功標準
+- 最低成功：確認 kernel / OVS module 狀態，找到 source tree 與 `flow_table.c`。
+- 中等成功：unmodified module rebuild / reload 成功。
+- 高成功：加入 jhash default 的 hash selection skeleton，並通過 D-v2-mid sanity。
+
+### 今日 deliverable
+- `docs/kernel_patch_notes.md`
+  - kernel / openvswitch module 狀態
+  - source tree 位置
+  - unmodified rebuild / reload 步驟
+  - unload/reload 是否成功
+  - sanity traffic 結果
+  - 卡關點與下次接續事項
+- 若 5b/6 通過，commit hash selection skeleton。
+
+
+---
+
+## 2026-06-05 — Check-out：flow_hash() patch first pass
+
+### 今日目標
+
+* 確認目前 kernel 與 Open vSwitch kernel module 狀態。
+* 取得可用的 Linux 6.8 HWE source tree，定位 `net/openvswitch/flow_table.c::flow_hash()`。
+* 先走通 unmodified `openvswitch.ko` 的 rebuild / reload / sanity pipeline。
+* 若 reload pipeline 成功，再加入 jhash-default 的 hash selection skeleton，確認修改過的 module 仍可正常運作。
+
+### 今日操作
+
+* 確認目前環境為 `6.8.0-124-generic`，`openvswitch` 以 kernel module 形式載入，且 `vermagic` 含 `mod_unload`，可進行 unload / reload 測試。
+* 使用 `apt source linux-hwe-6.8` 取得 HWE 6.8 source。過程中需先開啟 `deb-src` repository，避免誤用 Ubuntu 22.04 預設的 `linux-source-5.15.0`。
+* 在 source tree 中定位 `net/openvswitch/flow_table.c::flow_hash()`，並建立 git baseline。
+* 解決 `vermagic` 不一致問題：直接在 HWE source tree build 會得到 `6.8.12+`，與 running kernel `6.8.0-124-generic` 不符。因此改用：
+
+  ```bash
+  make -C /lib/modules/$(uname -r)/build \
+    M=$PWD/net/openvswitch \
+    modules -j$(nproc)
+  ```
+
+  讓 module 使用 running kernel 的 build context，成功產生 `vermagic = 6.8.0-124-generic` 的 `openvswitch.ko`。
+* 走通 reload pipeline：備份系統原版 module、cleanup testbed、停止 OVS userspace、卸載舊 module、載入自製 module、重啟 OVS userspace、重建 testbed，最後用 `ns1 -> ns2` ping 做 sanity test。
+* 加入 jhash-default hash selection skeleton。此階段只加入 compile-time selection 結構，實際 backend 仍為 `jhash2()`，尚未實作 `hsiphash` / `siphash`。
+* 重新 build / reload skeleton module，並用 D-v2-mid 做 sanity run。
+
+### 觀察結果
+
+* 最低成功標準完成：kernel / module 狀態確認、Linux 6.8 HWE source 取得、`flow_hash()` 定位完成。
+* 中等成功標準完成：unmodified `openvswitch.ko` rebuild / reload 成功，`ns1 -> ns2` ping 為 0% packet loss。
+* 高成功標準完成：jhash-default skeleton module reload 成功，D-v2-mid sanity run 中 observed flows 約 `9752–9754`，pktgen `errors: 0`。
+* `srcversion` 實測可區分自製 module 與系統原版 module。自製 module 的 `srcversion` 與系統原版不同，且與 `/sys/module/openvswitch/srcversion` 現載入值一致，可作為確認 kernel 載入自製版本的依據。
+
+### 目前判斷
+
+* `vermagic` 對齊是 HWE kernel 環境下的主要工程門檻。直接從 HWE source root build 會得到不相容的 `6.8.12+`，需改用 running kernel headers build context。
+* OVS kernel module 的 rebuild / reload pipeline 已經打通，後續可以用同一流程反覆測試修改後的 `openvswitch.ko`。
+* jhash-default skeleton 通過 D-v2-mid sanity，代表「改 `flow_table.c` → build → reload → workload sanity」的迭代迴路已成立。
+* 目前尚未做任何 hash function 效能比較；今天只驗證修改過的 datapath module 仍能正常載入與處理封包。
+
+### 今日結論
+
+* 第一版 kernel patch 工程流程已建立完成。
+* 修改範圍目前仍限定在 `flow_hash()`，並保留 `jhash2()` 作為 default backend。
+* `find_bucket()`、`ufid_hash()`、mask cache 與 runtime switching 均暫不處理，以避免過早引入額外變因。
+* 後續可以開始實作第一個非 jhash backend，但應先從 `hsiphash` 開始，並只做 sanity，不立即做正式 benchmark。
+
+### 下一步
+
+* 回實驗室後，在 skeleton 中實作 `hsiphash` branch，先確認 API、key、length、alignment 與 output 型別處理。
+* 第一版 `hsiphash` 可先使用 fixed static key 做工程 sanity；正式報告需註明 fixed key 不代表完整安全部署。
+* `siphash` 因輸出為 64-bit，需另外設計 u64 → u32 folding，建議晚於 `hsiphash` 實作。
+* `.gitignore` 需排除 `kernel_work/`，避免將 HWE source tree 與大型 tarball 放進主專案 repo。主 repo 只保留 notes、scripts 與 experiment log。
+
+### 細節文件
+本日誌只記錄今日進度。完整操作細節請看：
+- `ovs_datapath_bench/notes/lkm_build.md`：kernel source、build dependency、vermagic 對齊與 module rebuild。
+- `ovs_datapath_bench/notes/lkm_reload.md`：module unload / reload、OVS service restart、testbed sanity 與 rollback。

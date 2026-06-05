@@ -22,3 +22,4 @@ slides/.slidev/
 # Python bytecode cache
 __pycache__/
 *.pyc
+kernel_work/
