@@ -1,0 +1,28 @@
+Watching br0 datapath for 20s (per-second deltas)...
+  d_hit    = fast-path flow-table matches/s (successful hash lookups/s)
+  d_missed = upcalls/s (new megaflows installed)
+  flows    = datapath flows currently installed (hash table entries)
+  masks    = subtables searched (masked flow_hash() per packet)
+  hit/pkt  = avg mask lookups per packet
+
+t(s)            d_hit     d_missed      flows    masks  hit/pkt
+1                   0            0          0        0     1.01
+2                   0            0          0        0     1.01
+3              569447        25940       9752        2     1.01
+4              730843            0       9752        2     1.01
+5              740829            0       9752        2     1.01
+6              749855            0       9752        2     1.01
+7              748553            0       9752        2     1.01
+8              753318            2       9754        3     1.01
+9              733418            0       9754        3     1.01
+10             742141            0       9754        3     1.01
+11             720955            0       9754        3     1.00
+12             755670            0       9754        3     1.00
+13               8611            0       9754        3     1.00
+14                  0            0       9754        3     1.00
+15                  0            0       9754        3     1.00
+16                  0            0       9754        3     1.00
+17                  0            0       9754        3     1.00
+18                  0            0       9752        2     1.00
+19                  0            0       9752        2     1.00
+20                  0            0       9752        2     1.00

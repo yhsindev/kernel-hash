@@ -1,0 +1,10 @@
+pktgen config:
+  netns=ns1 dev=veth1  10.0.0.1 -> 10.0.0.2 (mac 7a:84:20:a6:20:ac)
+  udp src port: 20000-20199 (random)
+  udp dst port: 9000-9049 (random)
+  pkt_size=64 count=0 duration=15s
+Starting pktgen... (tip: in another terminal run ./observe_flows.sh --watch 15)
+
+=== pktgen result (veth1) ===
+Result: OK: 14918585(c14915941+d2644) usec, 10858272 (64byte,0frags)
+  727835pps 372Mb/sec (372651520bps) errors: 0
