@@ -272,3 +272,140 @@
 本日誌只記錄今日進度。完整操作細節請看：
 - `ovs_datapath_bench/notes/lkm_build.md`：kernel source、build dependency、vermagic 對齊與 module rebuild。
 - `ovs_datapath_bench/notes/lkm_reload.md`：module unload / reload、OVS service restart、testbed sanity 與 rollback。
+
+## 2026-06-07 — Check-in：hsiphash 變體 first pass
+
+### 今日方向
+
+* 6/5 已完成 OVS module rebuild / reload pipeline 與 jhash-default skeleton。
+* 今日進入第一個非 jhash backend：`hsiphash`。
+* 目標是驗證 skeleton 能容納第二種 hash backend，並保持 datapath sanity。
+
+### 今日任務
+
+1. 檢查目前 `flow_hash()` skeleton 與 jhash default 路徑。
+2. 查清 `hsiphash` API、key 型別與 input length 用法。
+3. 在 skeleton 中加入 `hsiphash` branch，但暫不動 `find_bucket()` / `ufid_hash()` / mask cache。
+4. 使用 running-kernel build context 重新 build，確認 `vermagic` 對齊。
+5. reload 新 module，確認載入版本正確。
+6. 重建 testbed，跑 ping 與 D-v2-mid sanity。
+
+### 今日不做
+
+* 不實作 `siphash`。
+* 不做 runtime switching。
+* 不做正式 cross-hash benchmark。
+* 不解讀 pps / hit-pkt 效能差異。
+
+### 今日成功標準
+
+* 最低：`hsiphash` branch 能 compile。
+* 中等：`hsiphash` 版本 reload 成功。
+* 高：通過 D-v2-mid sanity，flows 能正常起來且 pktgen `errors:0`。
+
+### 今日 deliverable
+
+* `flow_hash()` 內新增可切換的 `hsiphash` 路徑。
+* 在 notes 補充 `hsiphash` 的 key、length、alignment 處理方式與卡關點。
+
+---
+## 2026-06-07 — Check-out：hsiphash first pass 與 jhash perf path 釐清
+
+### 今日完成
+
+* 實作 `flow_hash()` 的第一個非 jhash backend：`hsiphash`。
+* 完成 hsiphash 版本的 build / reload，並確認：
+
+  * `vermagic` 對齊 `6.8.0-124-generic`
+  * loaded `srcversion` 與 build artifact `srcversion` 一致
+  * OVS userspace 可正常重啟
+  * testbed 可重建，`ns1 -> ns2` ping 0% loss
+* 完成 hsiphash D-v2-mid sanity 與 controlled delta run1。
+* 修正 `agent_workflow.md`：mini benchmark 主指標改為 steady-state `perf` cycle%，pps / hit-missed-lost delta 降為輔助指標。
+* 切回 jhash backend，完成 build / reload，並確認 jhash 版本已正確載入。
+* 完成 jhash D-v2-mid steady-state perf run1。
+* 釐清 jhash perf report 中出現 `__siphash_unaligned` 的原因。
+
+### 關鍵結果
+
+#### hsiphash first pass
+
+* hsiphash build 成功，`srcversion = 1489A986A8265DDAE1DB93E`。
+* D-v2-mid sanity 通過：
+
+  * flows 約 `9752–9754`
+  * pktgen `errors: 0`
+  * ping 0% loss
+* hsiphash controlled delta run1：
+
+  * hit delta = `7,253,640`
+  * missed delta = `25,942`
+  * lost delta = `10,872`
+  * pktgen 約 `730,395 pps`
+  * pktgen `errors: 0`
+* `lost delta` 主要視為初始 flow install burst 對 userspace upcall path 的壓力訊號，不作為 hsiphash 功能失敗判斷。
+
+#### hsiphash perf baseline
+
+* hsiphash steady-state perf baseline 已取得：
+
+  * `masked_flow_lookup` 約 `7.72%`
+  * `__hsiphash_unaligned` 約 `1.32%`
+* 此結果確認 perf 可量到 OVS lookup path 與可見 hash symbol 的 cycle%，因此後續 mini benchmark 主指標應使用 perf，而不是只看 pps / delta。
+
+#### jhash perf run1
+
+* jhash backend reload 正確：
+
+  * loaded `srcversion = C90156343EF867AED1CB6F0`
+  * build artifact `srcversion = C90156343EF867AED1CB6F0`
+  * `flow_table.c` define 為 `JHASH=1, HSIPHASH=0`
+* jhash run1 workload 有效：
+
+  * flows 約 `9752`
+  * pktgen 約 `732,221 pps`
+  * pktgen `errors: 0`
+  * ping 0% loss
+* jhash run1 perf：
+
+  * `masked_flow_lookup` self 約 `7.72%`
+  * perf 中出現 `__siphash_unaligned`，但 call chain 顯示它來自 `__skb_get_hash → __skb_flow_dissect → __siphash_unaligned`
+  * 因此 `__siphash_unaligned` 屬於外部 skb hash / flow dissector path，不是 OVS `flow_hash()` jhash backend 成本
+
+### 目前判斷
+
+* hsiphash first pass 已通過 build、reload、ping sanity、D-v2-mid sanity 與 controlled delta run1。
+* jhash backend reload 正確，並非仍停在 hsiphash。
+* `perf -a` 是全系統取樣，會包含 OVS lookup path 之外的 kernel networking 成本；後續分析必須區分：
+
+  * OVS flow table lookup path：`ovs_flow_tbl_lookup_stats → flow_lookup → masked_flow_lookup`
+  * 外部 skb hash path：`__skb_get_hash → __skb_flow_dissect → __siphash_unaligned`
+* 第一版比較規則暫定：
+
+  * jhash：看 `masked_flow_lookup self%`
+  * hsiphash：看 `masked_flow_lookup self% + __hsiphash_unaligned self%`
+  * skb siphash：標記為外部 networking path，不納入 `flow_hash()` backend 成本
+
+### 未解問題
+
+* jhash 與 hsiphash 目前都還沒有足夠多次 perf run，不能下正式效能結論。
+* 需要補 jhash run2 / run3，以及 hsiphash perf run2 / run3，才能整理第一版 mini benchmark 平均值。
+* hsiphash 使用 fixed static key，只適合可重現的工程比較；後續報告需說明這不是 production security design。
+* 需要確認最終表格如何呈現 inline jhash 與 non-inline hsiphash 的比較方式。
+
+### 下一步
+
+* 明天先維持 jhash backend，不切換。
+* 跑 jhash D-v2-mid steady-state perf run2 / run3。
+* 再切回 hsiphash，跑 hsiphash perf run2 / run3。
+* 整理第一版 jhash vs hsiphash perf 對照表：
+
+  * 主欄位：`masked_flow_lookup self%`、可見 hash symbol self%、合併 lookup/hash 成本
+  * 輔助欄位：pps、flows、hit/missed/lost delta、pktgen errors、ping
+
+### 文件與資料狀態
+
+* `agent_workflow.md` 已更新為 perf 主指標版本。
+* hsiphash sanity / delta run1 資料已產生，需確認是否補 summary。
+* jhash perf run1 結果資料夾已產生。
+* 今日結論應補進 `docs/experiment_log.md`，但目前仍屬 mini benchmark 前置與 preliminary perf validation，不寫成正式實驗結論。
