@@ -22,8 +22,10 @@ modinfo net/openvswitch/openvswitch.ko | grep -E "filename|name|vermagic|depends
 預期重點：
 
 ```text
-uname -r = 6.8.0-124-generic
-vermagic = 6.8.0-124-generic SMP preempt mod_unload modversions
+filename:       /home/iris/projects/kernel-hash/kernel_work/linux-hwe-6.8-6.8.0/net/openvswitch/openvswitch.ko
+depends:        nf_conntrack,nsh,nf_nat,nf_conncount,libcrc32c
+name:           openvswitch
+vermagic:       6.8.0-124-generic SMP preempt mod_unload modversions 
 ```
 
 若 `vermagic` 不一致，不要繼續 reload。
@@ -179,30 +181,11 @@ sudo modprobe -r openvswitch             # 再卸一次
 
 ---
 
-## 6. 載入自己 build 的 unmodified openvswitch.ko
-
+##  6. 載入自己 build 的 openvswitch.ko
 ```bash
 cd ~/projects/kernel-hash/kernel_work/linux-hwe-6.8-6.8.0
-
-sudo insmod net/openvswitch/openvswitch.ko
 ```
-
-確認 module 已載入：
-
-```bash
-lsmod | grep openvswitch
-sudo dmesg | tail -30
-```
-
-若出現 unknown symbol，先檢查 dependencies 是否存在：
-
-```bash
-modinfo net/openvswitch/openvswitch.ko | grep depends
-lsmod | grep -E "nf_conntrack|nsh|nf_nat|nf_conncount|libcrc32c" || true
-```
-
-必要時先載入 dependencies：
-
+# insmod 不會自動處理 dependencies，因此先預載 openvswitch.ko 需要的 modules。
 ```bash
 sudo modprobe nsh
 sudo modprobe nf_conncount
@@ -213,7 +196,11 @@ sudo modprobe libcrc32c
 lsmod | grep -E "nsh|nf_conncount|nf_nat|nf_conntrack|libcrc32c"
 
 sudo insmod net/openvswitch/openvswitch.ko
+
+lsmod | grep openvswitch
 ```
+
+`insmod` 只載入指定 `.ko`，不會像 `modprobe` 一樣自動處理 dependency。由於自製 `openvswitch.ko` 依賴 `nsh`、`nf_conncount`、`nf_nat`、`nf_conntrack` 與 `libcrc32c`，reload 時先固定預載這些 modules，可避免 `Unknown symbol` error。
 
 確認 kernel 載入的 module 來源（比對 srcversion）：
 
