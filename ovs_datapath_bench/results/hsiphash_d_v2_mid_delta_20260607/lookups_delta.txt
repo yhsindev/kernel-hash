@@ -1,3 +1,0 @@
-hit: before=14696451 after=21950091 delta=7253640
-missed: before=54566 after=80508 delta=25942
-lost: before=24819 after=35691 delta=10872

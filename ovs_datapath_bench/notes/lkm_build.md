@@ -493,3 +493,64 @@ sudo systemctl start openvswitch-switch
 sudo ovs-vsctl show          # br0 應該回來
 sudo ovs-ofctl dump-flows br0 | wc -l   # 你的 rule 應該還在（OVS DB 持久化）
 ```
+
+---
+
+## Debug log: 2026-06-08 vermagic 又跑回 `6.8.12+`
+
+### 症狀
+切 hsiphash backend、rebuild 後 reload，被 reload 腳本擋下:
+
+```text
+vermagic:       6.8.12+ SMP preempt mod_unload modversions
+ERROR: vermagic 不符 running kernel 6.8.0-124-generic，拒絕 reload
+```
+
+reload 腳本 Step 0 的 vermagic guard 正確攔截，沒讓錯版本 module 上 live kernel。
+
+### 根因
+build 指令圖快寫成「在 source tree 裡直接編」:
+
+```bash
+cd kernel_work/linux-hwe-6.8-6.8.0
+make M=net/openvswitch modules        # ← 錯:沒有 -C running kernel build dir
+```
+
+這樣 kbuild 用的是 **source tree 自己的** version：Makefile `SUBLEVEL=12` +
+git tree 的 `+` → `kernelrelease = 6.8.12+`，並把
+`include/generated/utsrelease.h`、`include/config/kernel.release` 都(重新)寫成
+`6.8.12+`。vermagic 從 `kernel.release` 來，於是 module 變 `6.8.12+`，對不上
+running 的 Ubuntu kernel `6.8.0-124-generic`。
+
+確認是這兩個檔在作怪:
+
+```bash
+cat include/generated/utsrelease.h   # #define UTS_RELEASE "6.8.12+"
+cat include/config/kernel.release    # 6.8.12+
+grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) ' Makefile   # 6 / 8 / 12
+```
+
+### 修法(回到第 9 節的正解)
+一定要用 **running kernel 的 build dir** 當 `-C`，只用 `M=` 指向我們改過的 source：
+
+```bash
+cd ~/projects/kernel-hash/kernel_work/linux-hwe-6.8-6.8.0
+make M=net/openvswitch clean
+make -C /lib/modules/$(uname -r)/build M=$PWD/net/openvswitch modules -j$(nproc)
+```
+
+`-C /lib/modules/6.8.0-124-generic/build` 提供 Ubuntu 的 `kernel.release`
+（`6.8.0-124-generic`）與 `Module.symvers`，編出來的 vermagic 才對得上。修正後:
+
+```text
+vermagic:   6.8.0-124-generic SMP preempt mod_unload modversions   ✅
+srcversion: 670B9FE03F3CECAF4D7F865
+nm -u ...:  U __hsiphash_unaligned                                  ✅ hsiphash
+```
+
+### 兩個重點
+1. **`srcversion` 不受影響**:它是 source 的 MD5，不管用哪個 build dir 都一樣
+   （錯/對兩次 build 都是 `670B9FE0...`）。真正被 build dir 決定的是 **vermagic**。
+   → 換句話說,光看 srcversion 對不出這個錯,要看 vermagic。
+2. reload 腳本 Step 0 的 vermagic guard 救了一命 — 錯版本 module 沒被 insmod
+   到 live kernel。**永遠別繞過那個檢查**。

@@ -409,3 +409,146 @@
 * hsiphash sanity / delta run1 資料已產生，需確認是否補 summary。
 * jhash perf run1 結果資料夾已產生。
 * 今日結論應補進 `docs/experiment_log.md`，但目前仍屬 mini benchmark 前置與 preliminary perf validation，不寫成正式實驗結論。
+
+## 2026-06-08 — Check-in：siphash backend + 三 backend perf 對照
+
+### 今日方向
+- backend 身分驗證方法已固定：以 `flow_table.c` define、`srcversion`、`nm -u` 交叉確認。
+- 今日補齊第三個 backend：`siphash`。
+- 若 siphash build / reload / sanity 通過，今天推進到三 backend steady-state perf，產出第一版對照表。
+
+### 今日任務
+
+#### Phase 1：siphash backend first pass
+1. 實作 `flow_table.c` 的 `SIPHASH` 分支：`siphash()` + `u64 → u32` folding。
+2. build siphash backend，確認 `vermagic` 對齊。
+3. 用 `nm -u openvswitch.ko` 確認 import `__siphash_unaligned`。
+4. reload siphash module，確認 loaded `srcversion` = build artifact `srcversion`。
+5. 跑 D-v2-mid sanity：flows 約 9752、pktgen errors 0、ping 0% loss。
+
+#### Phase 2：siphash perf run
+1. 跑 siphash D-v2-mid steady-state perf run1。
+2. 檢查 `__siphash_unaligned` call-tree 歸屬，區分：
+   - OVS `flow_hash()` path
+   - 外部 `__skb_get_hash / __skb_flow_dissect` path
+
+#### Phase 3：三 backend mini benchmark
+1. jhash / hsiphash / siphash 各補到 N≥3 steady-state perf。
+2. 每次 run 前固定驗 backend 身分：define、srcversion、`nm -u`。
+3. 整理第一版三 backend perf 對照表。
+
+### 今日不做
+- 不做 runtime switching / module_param / sysctl。
+- 不動 `find_bucket()` / `ufid_hash()` / mask cache。
+- 不擴大 D-v2-large。
+- 不用 pps / lost 當 hash 效能主指標。
+
+### 成功標準
+- 最低：siphash branch compile，且 `nm -u` 可確認 backend 身分。
+- 中等：siphash reload 成功，D-v2-mid sanity 通過。
+- 高：完成 siphash perf run1，並取得三 backend 第一版 steady-state perf 對照。
+- 超標：三 backend 各 N≥3 perf 完成，整理成可放進進度報告的表格。
+
+### 預設下一步
+- 先實作 siphash branch。
+- 若 build/reload 卡住，優先修 correctness。
+
+## 2026-06-08 — Check-out：三 backend perf mini benchmark 與量測方法修正
+
+### 今日完成
+
+* 完成 `siphash` backend 實作（`flow_table.c` `SIPHASH` 分支：`siphash()` + `u64 → u32` folding）。
+* 固定三個 backend 的身分驗證方法（每輪 reload 前交叉確認）：
+
+  * `flow_table.c` define
+  * loaded / build artifact `srcversion`
+  * `nm -u openvswitch.ko` import symbol
+* 完成 `noinline ovs_flow_hash_backend()` wrapper，讓 perf 可獨立觀察 hash backend 成本。
+* 修正 perf 主指標：改看 `ovs_flow_hash_backend children%`，不再只看 `masked_flow_lookup self%`。
+* 修正 build 流程：必須用 `make -C /lib/modules/$(uname -r)/build M=...`，避免在 source tree 內直接 `make` 把 vermagic 寫成 `6.8.12+`（debug 細節見 `lkm_build.md`）。
+* 固定 CPU governor 為 `performance`，確認 12/12 logical CPUs 套用成功。
+* 完成三 backend × N=5 clean perf run（jhash / hsiphash / siphash）。
+* 強化 `run_perf_set()` 量測設計：
+
+  * `flows_before_perf >= 9000` gate，避免 `flows=0` 時仍寫入假資料。
+  * 正式 run **不 del-flows**：warm-up 建一次 flows，正式 run 直接命中既有 flows（純 fast-path）。
+  * 因有獨立 warm-up 步驟，5 個正式 run **皆有效、run1 不丟**。
+* 修正 OVS datapath / userspace 狀態異常（`flows=0`、`lost` 暴增、`failed to put[modify]`）：reload 腳本 Step 2 補上停 `ovsdb-server` + testbed rebuild 後恢復（根因與流程見 `datapath_reload_recovery.md`）。
+* 抓取並保存 siphash call-tree attribution。
+
+### 關鍵結果
+
+#### Backend 身分
+
+* jhash：`srcversion = 9934512B440806A9DEFA77A`；`nm -u` 無 out-of-line hash import + `ohash_self ≈ ohash_children`（0.714 ≈ 0.716）→ jhash2 inline（已證實）。
+* hsiphash：`srcversion = 670B9FE03F3CECAF4D7F865`；`nm -u` 可見 `__hsiphash_unaligned`（out-of-line，`ohash_self ≈ 0.02`）。
+* siphash：`srcversion = 75AA9FCC444232089DB6AD7`；`nm -u` 可見 `__siphash_unaligned`（out-of-line，`ohash_self ≈ 0.03`）。
+
+（註：以上 srcversion 對應「noinline wrapper + 三 backend」版 `flow_table.c`，與 6/07 記錄的舊版 srcversion 不同，屬正常。）
+
+#### Clean perf summary
+
+| backend  | `ohash_children` mean ± sd | `ohash_self` mean | `masked_children` mean ± sd | pps mean |     flows |
+| -------- | -------------------------: | ----------------: | --------------------------: | -------: | --------: |
+| jhash    |              0.716 ± 0.139 |             0.714 |               6.840 ± 0.482 |  536,809 |      9752 |
+| hsiphash |              0.408 ± 0.096 |             0.018 |               6.836 ± 0.499 |  515,804 | 9752–9754 |
+| siphash  |              0.958 ± 0.204 |             0.032 |               8.042 ± 1.157 |  542,063 | 9752–9753 |
+
+* `sd = population stdev`（N=5）。
+* 註：`pps` 為 pktgen 送包速率（offered load），**非 OVS 轉發吞吐量**，不可解讀為 backend 效能；此處僅佐證「三組負載量級相當」。
+* 資料來源：`hash_backend_perf.csv`、`hash_backend_perf_summary.csv`。
+
+#### Call-tree attribution（siphash）
+
+```text
+masked_flow_lookup (7.25%)
+  → ovs_flow_hash_backend (0.77%)
+    → __siphash_unaligned (0.77%)
+```
+
+* wrapper 的 children% 整條流進 `__siphash_unaligned`（0.77% → 0.77%），無其他 callee → `ovs_flow_hash_backend children%` 確實涵蓋 siphash out-of-line hash cost。
+* 該 `__siphash_unaligned` 接在 `masked_flow_lookup` 底下（OVS fast-path），**不是** `__skb_get_hash → __skb_flow_dissect`（外部 skb hash path）。flat `__siphash_unaligned` 數字不可直接解讀，需靠此 caller→callee 邊區分。
+* 證據保存於 `siphash_calltree_attribution_20260608/`。
+
+### 目前判斷
+
+* 今日最重要成果不是得出最終 hash 排名，而是**建立可信的量測方法**。
+* `noinline ovs_flow_hash_backend()` 解決了 jhash inline、hsiphash / siphash out-of-line 造成的 perf attribution 不公平問題（統一看 wrapper children%）。
+* `flows gate` 解決了先前 `flows=0` 卻仍錄 perf 的假資料問題。
+* preliminary 結果：
+
+  * `siphash` 的 backend subtree cost 最高（≈ 0.96%）。
+  * `jhash` 與 `hsiphash` 在整體 `masked_flow_lookup` path 上幾乎一樣（≈ 6.84%）。
+  * `hsiphash` 的 `ohash_children` 低於 jhash，但仍應保守解讀，不可直接宣稱演算法本質上更快（百分比是全系統 perf sample 佔比，非 cycles/op）。
+* 排序對取樣穩健：丟不丟 run1，`hsiphash < jhash < siphash` 都成立。
+* D-v2-mid workload 可用，但 hash signal 仍偏小（0.4–1.0%），結果應定位為 **first-pass mini benchmark**，非 final benchmark。
+
+### 未解問題
+
+* `ohash_children` 僅約 0.4–1.0%，hash signal 偏小，後續可能需放大訊號（提高每封包 hash lookup 次數 / 加長 `flow_hash()` input length / 補 `perf annotate` instruction-level 證據）。
+* OVS datapath 曾出現 `flows=0`、`lost` 暴增；後續每輪 run 前必須保留 health check 與 flows gate。
+* 符號歧義**只有 siphash** 需持續用 call-tree 區分（`__siphash_unaligned` 與 skb-hash 共用）；jhash（inline）與 hsiphash（`__hsiphash_unaligned`，skb-hash 不用）本身即無歧義，不需每輪都重抓三個 call tree。
+
+### 下一步
+
+* 先不盲目重跑同一批 N=5。
+* 把今日結果整理進 `docs/experiment_log.md`（本篇）、`hash_backend_sanity.md`、`agent_workflow.md` 量測規則段。
+* 以 `hash_backend_perf.csv`、`hash_backend_perf_summary.csv`、`siphash_calltree_attribution_20260608/` 作為本輪 preliminary mini benchmark 資料。
+* 下一輪技術方向：
+
+  1. 保留 noinline wrapper 與 flows gate。
+  2. 先評估是否需放大 hash signal。
+  3. 若放大，優先設計小規模 confirmation run，不直接擴到大實驗。
+  4. 若寫報告，先把今日結果定義為「measurement methodology validation + preliminary comparison」。
+* D-v3 workload exploration 門檻採兩層（探索階段只跑 jhash）：candidate 能把 `hit/pkt` 拉過 2、`ovs_flow_hash_backend children%` 過 2%（baseline D-v2-mid ≈ 0.7%、hit/pkt ≈ 1.0）即值得保留；要 `hit/pkt ≥ 3`、`children%` 達 3–5% 且 run-to-run sd < mean 的 20–30%，才升格為三 backend 正式 benchmark 候選（理想目標 `hit/pkt ≥ 5`、`children% ≥ 5%`，非硬門檻）。
+
+### 文件與資料狀態
+
+* `hash_backend_perf.csv`：三 backend × N=5 clean perf 結果。
+* `hash_backend_perf_summary.csv`：已產生。
+* `siphash_calltree_attribution_20260608/`：siphash call-tree 證據已保存。
+* `reload_ovs_module.sh`：Step 2 已加停 `ovsdb-server`。
+* `lkm_build.md`：已補 vermagic `6.8.12+` debug log。
+* 先前 `flows=0` 的 jhash 資料視為 invalid，不納入結果。
+* 今日結果可進入 commit，但正式結論需標註為 preliminary。
+- 若 siphash sanity 通過，立刻進 siphash perf run1。

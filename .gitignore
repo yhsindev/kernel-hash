@@ -27,4 +27,4 @@ kernel_work/
 # Large per-run dumps under results/ (regenerable; keep only small summaries)
 ovs_datapath_bench/results/*/dpctl_dump_flows*.txt
 ovs_datapath_bench/results/*/ofctl_dump_flows*.txt
-ovs_datapath_bench/results/*/perf_report_full.txt
+ovs_datapath_bench/results/*/perf_report_*.txt
