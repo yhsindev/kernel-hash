@@ -452,6 +452,7 @@
 ### 預設下一步
 - 先實作 siphash branch。
 - 若 build/reload 卡住，優先修 correctness。
+- 若 siphash sanity 通過，立刻進 siphash perf run1。
 
 ## 2026-06-08 — Check-out：三 backend perf mini benchmark 與量測方法修正
 
@@ -551,4 +552,107 @@ masked_flow_lookup (7.25%)
 * `lkm_build.md`：已補 vermagic `6.8.12+` debug log。
 * 先前 `flows=0` 的 jhash 資料視為 invalid，不納入結果。
 * 今日結果可進入 commit，但正式結論需標註為 preliminary。
-- 若 siphash sanity 通過，立刻進 siphash perf run1。
+
+## 2026-06-09 — Check-in：D-v3 workload exploration（放大 hash signal）
+
+### 今日方向
+
+* 三 backend preliminary benchmark 已完成，但 `ovs_flow_hash_backend children%` 只有約 0.4–1.0%，hash signal 偏低。
+* 今日進入 D-v3 workload exploration，探索階段只跑 jhash。
+* 目標不是正式三 backend 對照，而是找出能放大 hash signal 的 workload candidate。
+
+### 今日任務
+
+1. 設計 1–2 個 D-v3 candidate workload：
+
+   * Candidate A：加長 `flow_hash()` input，例如讓 megaflow key unwildcard `nw_src / nw_dst`。
+   * Candidate B：提高 mask / subtable lookup 壓力，目標拉高 `hit/pkt`。
+2. 每個 candidate 只跑 jhash：
+
+   * 驗 backend 身分：define / srcversion / `nm -u`
+   * warm-up 建 flows
+   * perf 前檢查 `flows >= 9000`
+   * 記錄 `ovs_flow_hash_backend children%`、`masked_flow_lookup children%`、`hit/pkt`、flows、pktgen errors。
+3. 對照 D-v2-mid baseline：
+
+   * `ovs_flow_hash_backend children% ≈ 0.7%`
+   * `hit/pkt ≈ 1.0`
+   * flows 約 9752
+
+### 今日不做
+
+* 不切 hsiphash / siphash。
+* 不跑三 backend N=5。
+* 不做 runtime switching / module_param。
+* 不動 `find_bucket()` / `ufid_hash()` / mask cache。
+* 不擴 D-v2-large。
+
+### 成功標準
+
+* 最低：至少一個 D-v3 candidate 能穩定建 flows（≥ 9000）、pktgen errors = 0，並跑出有效 jhash perf。
+* 中等：
+
+  * 若是 input-length candidate：`ovs_flow_hash_backend children%` 明顯高於 baseline，至少 > 2%。
+  * 若是 multi-mask candidate：`hit/pkt > 2`，且 `ovs_flow_hash_backend children% > 2%`。
+* 高：
+
+  * `ovs_flow_hash_backend children%` 達 3–5%。
+  * 或 `hit/pkt >= 3` 且 flow / mask 狀態穩定。
+  * 可升格為三 backend 正式 benchmark candidate。
+
+### 預設下一步
+
+* 若 candidate 過正式門檻，下一輪再對該 workload 跑 jhash / hsiphash / siphash N≥5。
+* 若所有 candidate 都低於 2%，停止盲跑，改評估更強的 signal amplification：更長 hash input、更多 mask/subtable、或 perf annotate / instruction-level evidence。
+
+## 2026-06-09 — Check-out：D-v3 L3+L4 Candidate A（input 加長已確認，children% 未量）
+
+### 今日完成
+* 寫好兩個 D-v3 腳本：`install_dv3_l3l4_rules.sh`（L3+L4 exact rules，相鄰 mixed action 堵 prefix 捷徑）、`pktgen_dv3_l3l4.sh`（src/dst IP + src/dst port 四欄位 RND）。
+* rebuild jhash（srcversion `9934512B`、vermagic `6.8.0-124-generic`、`nm -u` 無 out-of-line hash import）。
+* 跑 Candidate A：`10 src_ip × 5 dst_ip × 50 src_port × 10 dst_port = 25,000` 條 exact L3+L4 rules。
+
+### 關鍵結果
+* **L3 確實進了 hash range**：`dump-flows -m` 顯示 megaflow key `ipv4(src=10.0.1.6,dst=10.0.2.2,…),udp(src=20008,dst=9008)`，nw_src/nw_dst 為 exact（非 `/0`）→ hash input 從「只含 L4」延伸到「L3+L4」，**A 的設計成立、input 已加長**。
+* flows ≈ `15,876`（短窗未跑滿 25k）；**masks total:1、hit/pkt 1.00** — 25k 規則同一 mask 形狀、單 mask 命中，符合預期。
+* pktgen `959,981 pps`、errors 0。
+
+### 目前判斷
+* A 的放大槓桿是 **input 長度**，不是 hit/pkt；hit/pkt=1.0 是預期，不算失敗。
+* 但**最關鍵的 `ovs_flow_hash_backend children%` 未量**（睡著前停在此），無法判斷 A 是否過探索門檻（> 2%）。
+
+### 未解問題
+* A 的 children% 待量；reboot 已清掉 runtime 環境（governor→powersave、載回系統 module `0E035C1F`），需整套重建才能量。
+
+### 下一步
+* 順延至 6/10：重建環境 → 量 A children% → 做 Candidate B（多 mask 拉 hit/pkt）。
+
+### 文件與資料狀態
+* `install_dv3_l3l4_rules.sh`、`pktgen_dv3_l3l4.sh` 已寫好，待 commit。
+* A 無 perf 存檔（children% 未量），本筆視為 in-progress、非完整結果。
+
+## 2026-06-10 — Check-in：D-v3 children% 量測 + Candidate B（多 mask）
+
+### 今日方向
+- 接 6/09：Candidate A 已確認 L3-exact（input 加長），但 children% 未量。今天先量 A 的 children%，判斷「加長 input」能否把 jhash children% 從 baseline ~0.72% 推過探索門檻（> 2%）。
+- 再做 Candidate B：多 mask 設計（不同欄位組合）拉高 hit/pkt → 每包多次 hash，測「更多 hash 次數」這條獨立放大路徑。
+
+### 今日任務
+1. 重建環境：governor→performance、reload jhash（`9934512B`）、install D-v3 A 規則、確認 flows + L3 exact。
+2. 量 Candidate A 的 `ovs_flow_hash_backend children%`（jhash，多次取平均），對照 baseline 0.72%。
+3. 設計 Candidate B：混合欄位組合規則造多 mask（目標 hit/pkt > 1），只跑 jhash，量 children% + hit/pkt。
+4. 用探索門檻（children% > 2%）判斷 A / B 是否值得升格三 backend 正式 benchmark。
+
+### 今日不做
+- 不切 hsiphash / siphash（探索只 jhash）。
+- 不跑 N=5 正式三 backend benchmark（過門檻才升格）。
+- 不動 find_bucket / ufid_hash / mask cache；不擴 D-v2-large。
+
+### 成功標準
+- 最低：重建環境成功、量到 A 的有效 children%。
+- 中等：A 或 B 任一把 children% 拉過 2%（達探索門檻）。
+- 高：確定一條放大路徑（input 長度 or 多 mask）穩定 > 3%，可升格正式 benchmark 候選。
+
+### 預設下一步
+- 若 A / B 過門檻 → 下一輪對該 workload 跑三 backend N≥5 正式對照。
+- 若都卡 < 2% → 評估更激進放大（更長 input / 多 mask 疊加）或改 perf annotate。
