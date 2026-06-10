@@ -657,45 +657,247 @@ masked_flow_lookup (7.25%)
 - 若 A / B 過門檻 → 下一輪對該 workload 跑三 backend N≥5 正式對照。
 - 若都卡 < 2% → 評估更激進放大（更長 input / 多 mask 疊加）或改 perf annotate。
 
-## 2026-06-10 — Check-out：D-v3 訊號放大（A 量測 / B 多 mask 成功 / A+B prefix 失敗）+ 量測指標分層
+## 2026-06-10 — Check-out：D-v3 訊號放大、multimask workload 成功與量測指標分層
 
 ### 今日完成
-- 量到 Candidate A（L3+L4 長 input）的 jhash children%（6/09 缺的數字）。
-- 寫 + 跑 Candidate B（multimask，欄位組合變化造多 mask）。
-- 寫 + 跑 A+B 合體（prefix 長度變化版）→ 失敗，得到明確負結論。
-- 跟 GPT 辯論後，定版「量測指標分層規格（Layer 0–4）」並寫進 `agent_workflow.md`。
 
-### 關鍵結果
-- 訊號放大進展（jhash，`ovs_flow_hash_backend` children%）：
+* 補齊 Candidate A（L3+L4 長 input）的 jhash perf probe，取得 `ovs_flow_hash_backend` children%。
+* 設計並執行 Candidate B（D-v3B multimask workload），透過變化 match 欄位組合製造多種 datapath masks。
+* 設計並執行 Candidate A+B（prefix-length combined workload），測試「長 input + 多 mask」是否可同時成立。
+* 釐清 A+B prefix 版失敗原因：prefix 長度變化沒有轉換成預期的 datapath multimask pressure。
+* 與 GPT 討論並定版「量測指標分層規格（Layer 0–4）」，將主指標、系統層指標與補充 latency 指標分開解讀。
+* 更新 `agent_workflow.md`：主指標改以 `ovs_flow_hash_backend children%` 為核心，並加入 CPU-bound gate 與 Layer 0–4 指標分層。
 
-  | workload | 放大槓桿 | hit/pkt | masks total | children% |
-  |---|---|---|---|---|
-  | baseline D-v2-mid | — | 1.0 | 1–2 | 0.72% |
-  | A（L3+L4 長 input） | input 長度 | 1.0 | 2 | 2.72% |
-  | **B（multimask）** | **每包多次 hash** | **2.74** | **7** | **4.59%** |
-  | A+B（prefix 版） | （失敗） | — | **1** | 1.47% |
+---
 
-- **B 是目前最強 candidate**：children 4.59% 落在「高」標準 3–5%，hit/pkt 2.74、7 個真 mask，validity 齊（flows 15439、errors 0）。
-- **A+B prefix 版失敗的根因**：prefix 長度（/24、/16）**不會**產生不同 datapath mask —— OVS 預設把 IP unwildcard 到 /32，8 個 band 塌成 1 個 mask（`dump-flows -m` 全 exact /32、`udp src=0/0`），children 反而掉到 1.47%。
+### 今日關鍵結果
+
+#### D-v3 workload comparison（jhash backend）
+
+| workload                  | 放大槓桿                   |  hit/pkt | masks total | `ovs_flow_hash_backend` children% | 判斷                  |
+| ------------------------- | ---------------------- | -------: | ----------: | --------------------------------: | ------------------- |
+| D-v2-mid baseline         | baseline               |    約 1.0 |         1–2 |                             0.72% | signal 太小           |
+| Candidate A：L3+L4 長 input | 加長 hash input          |    約 1.0 |           2 |                             2.72% | 有改善，但不足以當主 workload |
+| **Candidate B：multimask** | **每包多次 hash lookup**   | **2.74** |       **7** |                         **4.59%** | **目前最佳正式候選**        |
+| Candidate A+B：prefix 版    | 試圖結合 input + multimask |      不採用 |       **1** |                             1.47% | 失敗，保留為負結論           |
+
+---
+
+### Candidate B 結論
+
+D-v3B multimask 是目前最強 workload candidate。
+
+有效證據：
+
+* active datapath flows：`15439`
+* masks total：`7`
+* hit/pkt：`2.74`
+* pktgen errors：`0`
+* jhash `ovs_flow_hash_backend` children%：約 `4.59%`
+* hash signal 從 D-v2-mid baseline 的約 `0.72%` 放大到約 `4%+`
+
+判斷：
+
+* D-v3B 成功提高 OVS classifier lookup pressure。
+* 它不是單純增加 flow 數，而是透過多種 match 欄位組合形成多個 datapath masks。
+* 每個 packet 平均需要查約 2.7 次 mask，使 `flow_hash()` 呼叫密度提高。
+* 目前可升格為正式三 backend benchmark candidate。
+
+---
+
+### Candidate A 結論
+
+Candidate A 成功驗證 L3+L4 exact megaflow 可以形成。
+
+觀察：
+
+* `nw_src / nw_dst / tp_src / tp_dst` 可被放入 datapath megaflow key。
+* 代表加長 `flow_hash()` input 的方向在結構上成立。
+* 但 `masks total` 仍低，`hit/pkt` 約 1.0，因此只增加單次 hash input 長度，沒有增加每包 lookup 次數。
+
+判斷：
+
+* 可作為 structural validation。
+* 不適合作為正式三 backend benchmark 的主 workload。
+* 若報告需要說明探索過程，可保留為「input-length amplification works, but weaker than multimask」。
+
+---
+
+### Candidate A+B 結論
+
+A+B prefix 版失敗，應保留為負結論，不納入正式結果。
+
+失敗觀察：
+
+* rules 雖有多種 prefix 長度設計，例如 `/32`、`/24`、`/16`。
+* 但 kernel datapath 最終只形成 `masks total = 1`。
+* `ovs_flow_hash_backend` children% 只有約 `1.47%`，低於 D-v3B。
+* `udp src=0/0` 顯示部分 L4 欄位被 wildcard，沒有保住預期 lookup pressure。
+
+根因判斷：
+
+* prefix 長度變化不是可靠的 multimask 製造方式。
+* OVS datapath 可能將 prefix-based rules 泛化或轉成相同 mask shape。
+* 可靠的 multimask 手段是變化「match 欄位組合」，不是只變化 prefix 長度。
+
+---
+
+### 今日方法論修正
+
+#### 1. `hit/pkt` 需要小心解讀
+
+`ovs-dpctl show` 的 `hit/pkt` 是累積值。如果切換 workload 後沒有完整清理或即時 live sampling，可能被前一輪污染。
+
+後續判斷 workload 時：
+
+* `masks total`：看當下 datapath mask 數量。
+* `flows_before_perf`：看 perf window 是否有效。
+* `hit/pkt`：要用同一段 run 的 live sample 或 delta，避免累積污染。
+* `perf children%`：作為新鮮 perf window 的主判斷。
+
+#### 2. 主指標與系統指標分層
+
+後續正式 benchmark 不只看 perf percentage，但也不能把所有指標混在一起。
+
+量測分層如下：
+
+##### Layer 0 — Workload validity
+
+用來證明 run 有效，不作為效能主結論。
+
+* backend srcversion
+* `nm -u` hash symbol
+* flows_before_perf
+* masks total
+* hit/pkt
+* pktgen errors
+* lost / missed delta
+* ping sanity
+
+##### Layer 1 — Hash backend main metrics
+
+用來支撐 hash function 成本比較。
+
+* `ovs_flow_hash_backend children%`
+* `ovs_flow_hash_backend self%`
+* hash cycles / packet
+* call-tree attribution
+
+##### Layer 2 — OVS lookup path metrics
+
+用來說明 hash 成本是否反映到 lookup path。
+
+* `masked_flow_lookup children%`
+* `masked_flow_lookup self%`
+* lookup cycles / packet
+* hash / lookup ratio
+
+##### Layer 3 — Datapath system impact
+
+只有通過 CPU-bound gate 後才可解讀。
+
+* pps / throughput
+* cycles per packet
+* instructions per packet
+* softirq CPU utilization
+* NET_RX / NET_TX softirq delta
+
+##### Layer 4 — Supplementary latency evidence
+
+可用 bpftrace / ftrace 補充，不作為唯一主結論。
+
+* `ovs_flow_hash_backend()` latency histogram
+* `masked_flow_lookup()` latency histogram
+* p50 / p90 / p99 relative comparison
+
+---
 
 ### 目前判斷
-- **造多 mask 的可靠手段 = 變化「match 的欄位組合」（B），不是 prefix 長度（A+B 失敗）。** 已記入 D-v3B 設計。
-- **量測陷阱**：`ovs-dpctl show` 的 `hit/pkt` 是累積值，切 workload 不重設會被前一輪污染（A+B 顯示 2.89 是假象，真 masks total=1）。可信的是 `masks total`（當下）+ perf children%（新鮮取樣）。
-- 量測方法升級：主結論用 hash-isolated 指標（children% + hash_cycles/pkt + hash/lookup ratio），系統層（pps/softirq）須先過 CPU-bound gate 才能宣稱 system impact。
+
+* D-v3B 是目前最合理的正式 workload candidate。
+* 它同時具備：
+
+  * 足夠 flows
+  * 多 masks
+  * hit/pkt 顯著高於 baseline
+  * hash signal 落在 3–5% 的可觀察區間
+  * pktgen errors = 0
+* 不建議繼續放大 A+B，因為 D-v3B 已達正式候選門檻，而 A+B 目前會讓 workload 塌回單一 mask。
+* 下一階段重點不是再設計 workload，而是將 D-v3B 固定下來做公平三 backend comparison。
+
+---
 
 ### 未解問題
-- B 只有單次 / probe，**還沒 N≥5 + 變異/CI**。
-- Layer 3 system impact **還沒驗 CPU-bound**（`mpstat` 看轉發核心 %soft）；pps/softirq/cycles-per-packet 尚未正式量。
-- 三個 derived metric（hash_cycles/pkt、hash/lookup ratio、lookup_cycles/pkt）尚未正式入 CSV。
-- 是否就鎖 B 進三 backend 正式 benchmark，待下輪定。
+
+* D-v3B 目前只有 jhash probe，尚未完成 N≥5。
+* 尚未對 jhash / hsiphash / siphash 在 D-v3B 下做正式三 backend benchmark。
+* 尚未確認 Layer 3 是否可報 system impact：
+
+  * 需要 `mpstat -P ALL 1` 檢查轉發核心是否 CPU-bound。
+* 尚未把 derived metrics 納入正式 CSV：
+
+  * hash cycles / packet
+  * lookup cycles / packet
+  * hash / lookup ratio
+  * cycles / packet
+  * instructions / packet
+* bpftrace latency histogram 尚未執行，暫列為 optional supplementary evidence。
+
+---
 
 ### 下一步
-- 傾向**鎖定 B 當正式 workload**（in target、mask 機制可靠），對 jhash/hsiphash/siphash 跑 N≥5，套 Layer 0–4 指標。
-- 正式 run 前先 `mpstat -P ALL 1` 判斷 CPU-bound，決定 Layer 3 能不能報 system impact。
-- 補三個 derived metric 進 summary（都從現有 perf 算得出，不用多跑）。
+
+1. 鎖定 D-v3B multimask 作為正式 workload。
+2. 正式跑三 backend：
+
+   * jhash
+   * hsiphash
+   * siphash
+   * 每個 backend N≥5
+3. 每次 run 都套用 Layer 0–3 指標：
+
+   * backend identity
+   * flows / masks / hit-pkt
+   * pktgen pps / errors
+   * perf children/self
+   * cycles / instructions
+   * derived metrics
+4. 正式 run 前先用 `mpstat -P ALL 1` 判斷 CPU-bound。
+5. 若時間允許，再用 bpftrace 做 `ovs_flow_hash_backend()` latency histogram，作為 supplementary evidence。
+
+---
 
 ### 文件與資料狀態
-- 新增腳本：`install_dv3b_multimask_rules.sh`、`pktgen_dv3b_multimask.sh`、`install_dv3ab_combined_rules.sh`（+ 6/09 的 `install_dv3_l3l4_rules.sh`、`pktgen_dv3_l3l4.sh`）。
-- `agent_workflow.md`：主指標更新為 `ovs_flow_hash_backend` children%，新增「量測指標分層規格（Layer 0–4）」含 CPU-bound gate。
-- D-v3B probe 結果：`results/dv3b_multimask_jhash_probe_20260610_174557/`。
-- A+B（prefix 版）視為 **failed experiment / 負結論**保留，不納入正式結果。
+
+新增或使用的腳本：
+
+* `install_dv3_l3l4_rules.sh`
+* `pktgen_dv3_l3l4.sh`
+* `install_dv3b_multimask_rules.sh`
+* `pktgen_dv3b_multimask.sh`
+* `install_dv3ab_combined_rules.sh`
+
+重要資料目錄：
+
+* D-v3B jhash probe：
+
+  * `ovs_datapath_bench/results/dv3b_multimask_jhash_probe_20260610_174557/`
+* D-v3B live evidence：
+
+  * `ovs_datapath_bench/results/dv3b_multimask_live_20260610_174101/`
+* A+B prefix 版：
+
+  * 視為 failed experiment / negative result，保留但不納入正式 benchmark。
+
+---
+
+### 今日總結
+
+今天的主要成果是把 D-v3 workload exploration 收斂下來：
+
+* Candidate A 證明「加長 input」可行但不夠強。
+* Candidate B 證明「多 mask / 多 lookup」是有效 signal amplification 方法。
+* Candidate A+B 證明「prefix 長度變化」不是可靠 multimask 方法。
+* 正式 benchmark 應鎖定 D-v3B multimask，而不是繼續放大 workload。
+
+明天的主線應該是：**不要再改 workload，先把 D-v3B 三 backend N≥5 正式跑完。**
