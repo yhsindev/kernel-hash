@@ -139,8 +139,10 @@ Controlled run 可用來看趨勢，但不能直接當 final benchmark。
 
 用途：做第一版可比較結果。
 
-**主指標：perf 中 `masked_flow_lookup` 與可見 hash symbol（如 `__hsiphash_unaligned`）的 cycle%。**
-這是唯一能歸因到 fast-path hash 計算成本的指標。
+**主指標：perf 中 `ovs_flow_hash_backend`（noinline wrapper）的 children%。**
+這是統一三個 backend、能歸因到 fast-path hash 計算成本的指標
+（jhash inline 時 self≈children；hsiphash/siphash out-of-line 看 children）。
+完整指標分層見下方「量測指標分層規格（Layer 0–4）」。
 
 **輔助指標：pps、flows、hit/missed/lost delta、pktgen errors、ping。**
 這些用來確認 workload 是否有效、datapath 是否正常、perf 樣本是否可信，
@@ -173,6 +175,44 @@ install rules → del-flows
 
 （用單段連續 pktgen，而非「warm-up 一段 + perf 另一段」，是為了避免兩段之間
 flows idle timeout 過期而再次觸發 install burst。）
+
+#### 量測指標分層規格（Layer 0–4）
+
+原則：hash 只占每包工作的一小部分，backend 之間的差異更小。越貼著 hash 的指標越乾淨，
+越末端（pps/throughput）越被稀釋。所以**分層呈現**：主結論用 hash-isolated 指標，
+系統層只當佐證且須先過 CPU-bound gate。
+
+**Layer 0 — workload validity（不比快慢，證明實驗有效，每輪必附）**
+- backend srcversion + `nm -u` hash symbol（backend 身分）
+- `flows_before_perf`（perf window 非空跑）、`masks total`（是否 multimask）、`hit/pkt`（每包 lookup 壓力）
+- pktgen errors、OVS lost/missed delta（流量產生器與 datapath 正常）
+
+**Layer 1 — hash backend（主結論核心）**
+- `ovs_flow_hash_backend` **children%**（主指標）
+- **hash_cycles/packet = (cycles/packet) × children%** — 把比例換成每包絕對成本；
+  此式不受瓶頸影響（children% 是占總取樣比例，乘回總 cycles/pkt 即每包 hash cycles）。
+- call-tree attribution（hsiphash/siphash 確認 child symbol 真的掛在 wrapper 底下，非 skb-hash noise）
+
+**Layer 2 — lookup path**
+- `masked_flow_lookup` children% / self%
+- **hash/lookup ratio = ohash_children% / masked_children%**（用 flat 數字，非 call-tree 片段）。
+  這是 lookup path **內部比例**，對 pps/系統雜訊不敏感，比單看 children% 更穩、更有說服力。
+
+**Layer 3 — datapath system impact（⚠️ 須先過 CPU-bound GATE）**
+- **GATE：先 `mpstat -P ALL 1` 確認轉發核心 `%soft` 貼近 100%（CPU-bound）。**
+  若否（瓶頸在單執行緒 pktgen 產包）→ pps/throughput/softirq **不反映** hash 差異，
+  此時誠實寫「此 setup 未 CPU-bound，系統層無法歸因」，**不得宣稱 system impact**。
+- pps / Mbps（sanity；CPU-bound 時才升為系統佐證）
+- `cycles/packet`：須 **core-scoped 到轉發核心**（`perf stat -C <core>`，排除 pktgen sender），否則被稀釋
+- softirq `%soft`；（可選）instructions/packet、cache/branch misses
+
+**Layer 4 — latency（supplementary，非主結論）**
+- bpftrace histogram 量 **`masked_flow_lookup`**（不要量奈秒級的 wrapper —— kprobe 進出開銷會蓋過訊號）
+- 先驗「探針開銷 << 訊號」；只報**相對位移**（「siphash 把分布右移」），不報絕對 ns
+
+呈現原則：主結論 = Layer 1 + Layer 2 ratio；Layer 3 須過 GATE 才算 system impact；
+Layer 0 每輪必附；Layer 4 選配。三個 derived metric（hash_cycles/pkt、hash/lookup ratio、
+lookup_cycles/pkt）都從現有 perf 資料算得出，不用多跑，優先補。
 
 目前目標是先完成：
 

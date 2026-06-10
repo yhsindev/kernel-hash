@@ -656,3 +656,46 @@ masked_flow_lookup (7.25%)
 ### 預設下一步
 - 若 A / B 過門檻 → 下一輪對該 workload 跑三 backend N≥5 正式對照。
 - 若都卡 < 2% → 評估更激進放大（更長 input / 多 mask 疊加）或改 perf annotate。
+
+## 2026-06-10 — Check-out：D-v3 訊號放大（A 量測 / B 多 mask 成功 / A+B prefix 失敗）+ 量測指標分層
+
+### 今日完成
+- 量到 Candidate A（L3+L4 長 input）的 jhash children%（6/09 缺的數字）。
+- 寫 + 跑 Candidate B（multimask，欄位組合變化造多 mask）。
+- 寫 + 跑 A+B 合體（prefix 長度變化版）→ 失敗，得到明確負結論。
+- 跟 GPT 辯論後，定版「量測指標分層規格（Layer 0–4）」並寫進 `agent_workflow.md`。
+
+### 關鍵結果
+- 訊號放大進展（jhash，`ovs_flow_hash_backend` children%）：
+
+  | workload | 放大槓桿 | hit/pkt | masks total | children% |
+  |---|---|---|---|---|
+  | baseline D-v2-mid | — | 1.0 | 1–2 | 0.72% |
+  | A（L3+L4 長 input） | input 長度 | 1.0 | 2 | 2.72% |
+  | **B（multimask）** | **每包多次 hash** | **2.74** | **7** | **4.59%** |
+  | A+B（prefix 版） | （失敗） | — | **1** | 1.47% |
+
+- **B 是目前最強 candidate**：children 4.59% 落在「高」標準 3–5%，hit/pkt 2.74、7 個真 mask，validity 齊（flows 15439、errors 0）。
+- **A+B prefix 版失敗的根因**：prefix 長度（/24、/16）**不會**產生不同 datapath mask —— OVS 預設把 IP unwildcard 到 /32，8 個 band 塌成 1 個 mask（`dump-flows -m` 全 exact /32、`udp src=0/0`），children 反而掉到 1.47%。
+
+### 目前判斷
+- **造多 mask 的可靠手段 = 變化「match 的欄位組合」（B），不是 prefix 長度（A+B 失敗）。** 已記入 D-v3B 設計。
+- **量測陷阱**：`ovs-dpctl show` 的 `hit/pkt` 是累積值，切 workload 不重設會被前一輪污染（A+B 顯示 2.89 是假象，真 masks total=1）。可信的是 `masks total`（當下）+ perf children%（新鮮取樣）。
+- 量測方法升級：主結論用 hash-isolated 指標（children% + hash_cycles/pkt + hash/lookup ratio），系統層（pps/softirq）須先過 CPU-bound gate 才能宣稱 system impact。
+
+### 未解問題
+- B 只有單次 / probe，**還沒 N≥5 + 變異/CI**。
+- Layer 3 system impact **還沒驗 CPU-bound**（`mpstat` 看轉發核心 %soft）；pps/softirq/cycles-per-packet 尚未正式量。
+- 三個 derived metric（hash_cycles/pkt、hash/lookup ratio、lookup_cycles/pkt）尚未正式入 CSV。
+- 是否就鎖 B 進三 backend 正式 benchmark，待下輪定。
+
+### 下一步
+- 傾向**鎖定 B 當正式 workload**（in target、mask 機制可靠），對 jhash/hsiphash/siphash 跑 N≥5，套 Layer 0–4 指標。
+- 正式 run 前先 `mpstat -P ALL 1` 判斷 CPU-bound，決定 Layer 3 能不能報 system impact。
+- 補三個 derived metric 進 summary（都從現有 perf 算得出，不用多跑）。
+
+### 文件與資料狀態
+- 新增腳本：`install_dv3b_multimask_rules.sh`、`pktgen_dv3b_multimask.sh`、`install_dv3ab_combined_rules.sh`（+ 6/09 的 `install_dv3_l3l4_rules.sh`、`pktgen_dv3_l3l4.sh`）。
+- `agent_workflow.md`：主指標更新為 `ovs_flow_hash_backend` children%，新增「量測指標分層規格（Layer 0–4）」含 CPU-bound gate。
+- D-v3B probe 結果：`results/dv3b_multimask_jhash_probe_20260610_174557/`。
+- A+B（prefix 版）視為 **failed experiment / 負結論**保留，不納入正式結果。
