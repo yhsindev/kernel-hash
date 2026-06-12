@@ -1,0 +1,71 @@
+diff --git a/net/openvswitch/flow_table.c b/net/openvswitch/flow_table.c
+index 898b7b8..520456d 100644
+--- a/net/openvswitch/flow_table.c
++++ b/net/openvswitch/flow_table.c
+@@ -14,6 +14,7 @@
+ #include <net/llc_pdu.h>
+ #include <linux/kernel.h>
+ #include <linux/jhash.h>
++#include <linux/siphash.h>
+ #include <linux/jiffies.h>
+ #include <linux/llc.h>
+ #include <linux/module.h>
+@@ -642,29 +643,47 @@ int ovs_flow_tbl_flush(struct flow_table *flow_table)
+ 	return -ENOMEM;
+ }
+ 
+-#define OVS_FLOW_HASH_JHASH     1
++#define OVS_FLOW_HASH_JHASH     0
+ #define OVS_FLOW_HASH_HSIPHASH  0
+-#define OVS_FLOW_HASH_SIPHASH   0
++#define OVS_FLOW_HASH_SIPHASH   1
+ 
+-static u32 flow_hash(const struct sw_flow_key *key,
+-		     const struct sw_flow_key_range *range)
+-{
+-	const u32 *hash_key = (const u32 *)((const u8 *)key + range->start);
++static const hsiphash_key_t ovs_flow_hsiphash_key = {
++	.key = { 0x0706050403020100UL, 0x0f0e0d0c0b0a0908UL },
++};
+ 
+-	/* Make sure number of hash bytes are multiple of u32. */
+-	int hash_u32s = range_n_bytes(range) >> 2;
++static const siphash_key_t ovs_flow_siphash_key = {
++	.key = { 0x0706050403020100ULL, 0x0f0e0d0c0b0a0908ULL },
++};
+ 
++/* Keep this wrapper out-of-line so perf can attribute backend hash cost. */
++static noinline u32 ovs_flow_hash_backend(const void *hash_data,
++					  size_t hash_len)
++{
+ #if OVS_FLOW_HASH_JHASH
+-	return jhash2(hash_key, hash_u32s, 0);
++	return jhash2((const u32 *)hash_data, (u32)(hash_len >> 2), 0);
+ #elif OVS_FLOW_HASH_HSIPHASH
+-#error "OVS_FLOW_HASH_HSIPHASH is not implemented yet"
++	return hsiphash(hash_data, hash_len, &ovs_flow_hsiphash_key);
+ #elif OVS_FLOW_HASH_SIPHASH
+-#error "OVS_FLOW_HASH_SIPHASH is not implemented yet"
++	{
++		u64 h = siphash(hash_data, hash_len, &ovs_flow_siphash_key);
++
++		/* flow_hash() returns u32, so fold SipHash's 64-bit output. */
++		return (u32)(h ^ (h >> 32));
++	}
+ #else
+ #error "No OVS flow hash backend selected"
+ #endif
+ }
+ 
++static u32 flow_hash(const struct sw_flow_key *key,
++		     const struct sw_flow_key_range *range)
++{
++	const void *hash_data = (const u8 *)key + range->start;
++
++	return ovs_flow_hash_backend(hash_data, range_n_bytes(range));
++}
++
++
+ static int flow_key_start(const struct sw_flow_key *key)
+ {
+ 	if (key->tun_proto)

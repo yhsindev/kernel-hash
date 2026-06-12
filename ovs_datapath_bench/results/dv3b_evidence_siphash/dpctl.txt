@@ -1,0 +1,3 @@
+  lookups: hit:303596982 missed:40827 lost:0
+  flows: 15439
+  masks: hit:1213239876 total:7 hit/pkt:4.00

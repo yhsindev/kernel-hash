@@ -901,3 +901,247 @@ A+B prefix 版失敗，應保留為負結論，不納入正式結果。
 * 正式 benchmark 應鎖定 D-v3B multimask，而不是繼續放大 workload。
 
 明天的主線應該是：**不要再改 workload，先把 D-v3B 三 backend N≥5 正式跑完。**
+
+## 2026-06-12 — Check-in：D-v3B 三 backend 正式 benchmark（N≥5，套 Layer 0–4）
+
+### 今日方向
+
+* 鎖定 **D-v3B multimask** 作為正式 benchmark workload，不再修改或尋找新 workload。
+* D-v3B 已於 6/10 確認為目前最合理的 signal amplification workload：
+
+  * `flows ≈ 15439`
+  * `masks total = 7`
+  * `hit/pkt ≈ 2.74`
+  * jhash `ovs_flow_hash_backend` children% 約 `4.59%`
+  * pktgen errors = 0
+* 今日目標從 workload exploration 轉為正式量測：對 **jhash / hsiphash / siphash** 各跑 **N≥5**，建立第一版正式三 backend 對照表。
+
+---
+
+### 今日任務
+
+#### 1. 環境與 workload preflight
+
+* 設定 CPU governor 為 `performance`。
+* 確認目前 backend 身分：
+
+  * source define
+  * loaded `srcversion`
+  * build artifact `srcversion`
+  * `nm -u openvswitch.ko`
+* 安裝 D-v3B multimask rules。
+* live sanity check：
+
+  * `flows >= 9000`
+  * `masks total ≈ 7`
+  * `hit/pkt > 2`
+  * pktgen errors = 0
+  * `dump-flows -m` 顯示多種 megaflow mask shape
+
+#### 2. 三 backend 正式 benchmark
+
+對以下三個 backend 各跑 N≥5：
+
+* jhash
+* hsiphash
+* siphash
+
+每個 backend 流程固定為：
+
+1. rebuild / reload 對應 backend
+2. 驗證 `srcversion` 與 `nm -u`
+3. 安裝 D-v3B rules
+4. `ovs-dpctl del-flows`
+5. warm-up 建立 D-v3B datapath flows
+6. perf 前檢查 `flows >= 9000`
+7. 正式 perf window 期間不再 `del-flows`
+8. 保存 perf / pktgen / dpctl / mpstat / perf stat 結果
+
+#### 3. 套用 Layer 0–4 指標分層
+
+##### Layer 0 — Workload validity
+
+用來證明 run 有效，不作為效能主結論。
+
+* backend srcversion
+* `nm -u` hash symbol
+* flows_before_perf
+* masks total
+* hit/pkt 或 mask-hit delta
+* pktgen errors
+* missed / lost delta
+* ping sanity
+
+##### Layer 1 — Hash backend main metrics
+
+用來支撐 hash function 成本比較。
+
+* `ovs_flow_hash_backend children%`
+* `ovs_flow_hash_backend self%`
+* hash cycles / packet
+* call-tree attribution
+
+##### Layer 2 — OVS lookup path metrics
+
+用來說明 hash 成本是否反映到 lookup path。
+
+* `masked_flow_lookup children%`
+* `masked_flow_lookup self%`
+* lookup cycles / packet
+* hash / lookup ratio
+
+##### Layer 3 — Datapath system impact
+
+可以量測，但只有在 CPU-bound 或負載條件相當時，才適合用來主張 system-level impact。
+
+* pps / throughput
+* cycles per packet
+* instructions per packet
+* softirq CPU utilization
+* NET_RX / NET_TX softirq delta
+
+##### Layer 4 — Supplementary latency evidence
+
+可用 bpftrace / ftrace 補充，不作為唯一主結論。今日不列為主線。
+
+* `ovs_flow_hash_backend()` latency histogram
+* `masked_flow_lookup()` latency histogram
+* p50 / p90 / p99 relative comparison
+
+#### 4. 產生 derived metrics
+
+正式 summary 需包含：
+
+* `cycles_per_packet`
+* `instructions_per_packet`
+* `hash_cycles_per_packet`
+* `lookup_cycles_per_packet`
+* `hash_lookup_ratio`
+
+---
+
+### 今日不做
+
+* 不修改 D-v3B workload。
+* 不回頭做 A+B prefix 版。
+* 不再設計 D-v3C / larger multimask。
+* 不做 runtime switching / module_param。
+* 不動 `find_bucket()`、`ufid_hash()`、mask cache。
+* 不做 Layer 4 bpftrace latency；若時間允許，之後作為 supplementary evidence。
+
+---
+
+### 成功標準
+
+#### 最低標準
+
+* jhash / hsiphash / siphash 各至少一次 valid D-v3B perf run。
+* 每輪都通過：
+
+  * backend identity check
+  * flows gate
+  * pktgen errors = 0
+  * D-v3B masks / hit-pkt sanity
+
+#### 中等標準
+
+* 三 backend 各 N≥5。
+* 產出：
+
+  * `ovs_flow_hash_backend children/self` mean + sd
+  * `masked_flow_lookup children/self` mean + sd
+  * pps / throughput mean + sd
+* 能初步排出三 backend 的 hash backend cost 順序。
+
+#### 高標準
+
+* 補上 derived metrics：
+
+  * hash cycles / packet
+  * lookup cycles / packet
+  * hash / lookup ratio
+  * cycles / packet
+  * instructions / packet
+* 若 `mpstat` 顯示 forwarding / softirq path 接近 CPU-bound，則補充 Layer 3 system impact。
+* 若某 backend 變異過大，補跑或標註不穩，不硬下結論。
+
+---
+
+### 預設下一步
+
+* 若三 backend 結果穩定：
+
+  * 寫入 `experiment_log.md`
+  * 產生正式 summary CSV / table
+  * 開始草擬報告：methodology validation + D-v3B formal benchmark results
+* 若某 backend 異常：
+
+  * 先查 backend 身分：define / srcversion / `nm -u`
+  * 再查 workload validity：flows / masks / hit-pkt / errors / lost delta
+  * 不直接盲目重跑大實驗
+
+---
+
+### 今日核心原則
+
+* 指標要完整量，但結論要分層下。
+* 主結論依據 Layer 1 與 Layer 2。
+* Layer 3 作為 system-level evidence，但需通過 CPU-bound / comparable-load gate。
+* Layer 0 是 validity，不是效能主結論。
+* Layer 4 是補充 latency evidence，不阻塞今日正式 benchmark。
+
+今日主線：**固定 D-v3B，完成三 backend N≥5 formal benchmark。**
+
+
+## 2026-06-12 — Check-out：D-v3B 三 backend 正式 benchmark 完成（N=10 × 3）+ 證據鏈收齊
+
+### 今日完成
+* 三 backend × **N=10** 正式 benchmark 完成（同 D-v3B workload、同 CPU0-scoped 量測、同 noinline wrapper、同一版腳本）。
+* 量測工具鏈定版：`run_dv3b_benchmark.sh`（warm-up、flows gate、perf record/stat 皆 `-C 0`、工具 taskset 到 CPU3、%soft 背景記錄、CSV append）+ `summarize_dv3b.py`（mean/sd + 5 個 derived metrics）。
+* CPU-bound gate 通過：CPU 0 `%idle≈0`、`%iowait=0`、`%soft≈64–68`、其餘核心閒置 → 單核 CPU-bound 於轉發路徑（mpstat 證據見上）。Layer 3 可報 system impact。
+* 兩個量測紀律修正（皆已寫進 `benchmark_runbook.md`）：
+  * `perf record -a` → `-C 0`：分母只含轉發核心,children% 從飄動(4.3–7.7%)收斂到 sd≤0.14。
+  * CPU 0 的 SMT 雙生核 = CPU 6：量測工具 taskset 到 CPU3、量測時機器閒置;污染輪特徵 = IPC<1.5、masked% 飆、pps 掉。
+* pilot（舊協議 8 輪）歸檔為 `dv3b_pilot_jhash_20260612.csv`,正式表全部用新協議重跑。
+* 證據鏈收齊（GPT 審查建議的 A/B/C 全補）：
+  * A. identity ×3：`dv3b_evidence_{jhash,hsiphash,siphash}/identity.txt`（loaded=build srcversion + nm -u）。
+  * B. call-tree ×3：同資料夾 `calltree.txt`/`flat.txt`。
+  * C. wrapper patch：`ovs_flow_hash_backend_patch.diff`（71 行,只動 hash 區塊,lookup 邏輯零更動）。
+
+### 關鍵結果（正式表,N=10,sd 為樣本標準差）
+
+| backend | `ohash_children%` | hash cyc/pkt | cyc/pkt | pps | IPC | %soft |
+|---|---|---|---|---|---|---|
+| hsiphash | **5.65 ± 0.12** | 285 | 5052 | ~880k | 1.90 | 64.9 |
+| jhash | 9.50 ± 0.14 | 497 | 5228 | ~851k | 1.82 | 66.3 |
+| siphash | 9.95 ± 0.13 | 535 | 5379 | ~826k | 1.92 | 67.2 |
+
+* workload validity 三組一致：flows ≈15439、masks 7、hit/pkt ≈4.0、pktgen errors 0。
+* **hash backend cost 排序：hsiphash < jhash < siphash**（sd 遠小於組間差,排序可信）。
+* perf attribution、derived per-packet cost 與 system-level pps / cycles-per-packet 呈一致趨勢。
+* 範圍限定（必須隨表出現）：本結論限於本 D-v3B workload、本 CPU、kernel 6.8、fixed key、CPU0-scoped、wrapper-based integration。量到的是 **integration-level cost**（含共同 wrapper 開銷）,非純 hash primitive microbenchmark。cycles/pkt 為 steady-state 近似（perf stat 窗口 + pktgen 全段平均 pps;pps run 間變異 <1%）。
+
+### 證據觀察（細節解讀明日繼續）
+* wrapper 三種預測型態全部命中：jhash self≈children（9.09≈9.13,inline）;hsiphash/siphash self≈0.2–0.3、成本在 child symbol（out-of-line）→ 量測工具自我驗證。
+* **兩個 out-of-line symbol 都與 kernel 其他使用者撞名**：`__siphash_unaligned` 全域 14.68% vs wrapper 下 9.51%（差額 ≈ `__skb_get_hash`）;`__hsiphash_unaligned` 全域 7.28% vs wrapper 下 5.27%。→ flat symbol% 不可用,必須 caller-edge 歸因;不用 wrapper 會把 siphash 高估 ~50%。
+* 重現性：證據輪（獨立單次）jhash 9.13 / hsiphash 5.56 / siphash 9.81,皆落在 N=10 正式值同水位。
+
+### 目前判斷
+* 實驗本體可封板：方法學（wrapper + caller-edge + CPU0-scoped + N=10 + gate）站得住,不需再改實驗方式或程式。
+* 解讀措辭採保守版：hsiphash 結果說「在本 integration 下 lightweight keyed hash 不必然帶來效能懲罰」,不泛化成「keyed hash 都更快」;siphash overhead 限定「本 workload 下 cyc/pkt +2.9%」;IPC 差異是微架構假說,非已證結論。
+
+### 未解問題
+* 使用者尚未完全消化證據解讀（self/children、caller-edge、撞名歸因）→ 明日先補課再寫分析。
+* Exp1（kernel module microbenchmark）的 primitive 排序 vs 本次 integration 排序的交叉對照尚未做（翻舊數據即可,零成本）。
+* 報告文字（安全版解讀中英文模板已有草稿）尚未落到報告檔。
+
+### 下一步（6/13）
+1. 把實驗數據與證據逐項講懂（perf 指標、attribution、撞名、derived metrics 的因果鏈）。
+2. 做 Exp1 ↔ Exp2 排序交叉對照。
+3. 開始整理正式報告素材（結果表 + 範圍限定 + 證據引用）。
+
+### 文件與資料狀態
+* 正式數據：`dv3b_formal_perf.csv`（30 rows）、`dv3b_formal_summary.csv`;pilot 歸檔 `dv3b_pilot_jhash_20260612.csv`（含 `.bak` 保留被剔除的 2 輪污染數據之 provenance）。
+* 證據：`dv3b_evidence_{jhash,hsiphash,siphash}/`、`ovs_flow_hash_backend_patch.diff`。
+* 工具：`run_dv3b_benchmark.sh`、`summarize_dv3b.py`、`collect_backend_evidence.sh`、`benchmark_runbook.md`（新）。
+* 機器現況：jhash backend 已載回（預設狀態）、D-v3B 規則仍裝著。

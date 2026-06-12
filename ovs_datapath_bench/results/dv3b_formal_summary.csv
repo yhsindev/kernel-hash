@@ -1,0 +1,4 @@
+backend,n,ohash_children_mean,ohash_children_sd,ohash_self_mean,masked_children_mean,masked_children_sd,hit_per_pkt_mean,pps_mean,ipc_mean,soft_pct_mean,cycles_per_packet,instructions_per_packet,hash_cycles_per_packet,lookup_cycles_per_packet,hash_lookup_ratio_pct,flows_min,flows_max,masks_total
+jhash,10,9.504,0.144,9.461,27.052,0.332,4.0,851442.0,1.82,66.3,5228.0,9521.0,497.0,1414.0,35.1,15439,15439,7
+hsiphash,10,5.647,0.116,0.235,26.464,0.279,4.01,880434.0,1.9,64.9,5052.0,9572.0,285.0,1337.0,21.3,15439,15442,8
+siphash,10,9.945,0.131,0.308,30.626,0.335,4.01,826114.0,1.93,67.2,5379.0,10358.0,535.0,1647.0,32.5,15439,15442,8

@@ -1,0 +1,8 @@
+=== loaded srcversion ===
+9934512B440806A9DEFA77A
+=== build artifact srcversion ===
+srcversion:     9934512B440806A9DEFA77A
+vermagic:       6.8.0-124-generic SMP preempt mod_unload modversions 
+=== nm -u (hash imports) ===
+                 U __skb_get_hash
+                 U __skb_get_hash_symmetric

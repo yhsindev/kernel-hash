@@ -1,0 +1,21 @@
+             --7.28%--__hsiphash_unaligned
+                       |          
+                       |--5.27%--ovs_flow_hash_backend
+                       |          masked_flow_lookup
+                       |          flow_lookup.constprop.0
+                       |          ovs_flow_tbl_lookup_stats
+                       |          ovs_dp_process_packet
+                       |          ovs_vport_receive
+                       |          netdev_frame_hook
+--
+                                  ret_from_fork_asm
+
+     5.56%     0.23%  kpktgend_0  [openvswitch]      [k] ovs_flow_hash_backend
+            |          
+             --5.50%--ovs_flow_hash_backend
+                       |          
+                       |--5.32%--masked_flow_lookup
+                       |          flow_lookup.constprop.0
+                       |          ovs_flow_tbl_lookup_stats
+                       |          ovs_dp_process_packet
+                       |          ovs_vport_receive
