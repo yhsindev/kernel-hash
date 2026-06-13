@@ -19,7 +19,14 @@ ITER=${ITER:-10000000}
 REPEATS=${REPEATS:-5}
 HASH_TYPES=(0 1 2)
 HASH_NAMES=(jhash2 hsiphash siphash)
-INPUT_LENS=(16 32 64 128 256)
+# 掃描的輸入長度(bytes)。預設為實驗一的長度序列;可由環境變數覆寫,例如量
+# OVS 真實 megaflow 長度時:INPUT_LENS="88 160" ./run_all.sh
+#   88  = stateless IPv4 的 masked-key 長度
+#   160 = 走 conntrack(stateful ACL)post-ct 的 masked-key 長度
+#   (見 docs/exp2_ovn_report.md)
+# 各長度量到的是 per-call 成本;真實部署要不要把不同長度加權合併,取決於部署
+# 型態(例:雙向 stateful ACL 下 88:160 ≈ 1:2),屬後續分析,不在此預設。
+read -ra INPUT_LENS <<< "${INPUT_LENS:-16 32 64 128 256}"
 PERF_EVENTS=cycles,instructions,branch-misses,cache-misses
 
 if [ ! -f "$KO" ]; then
@@ -78,14 +85,17 @@ for repeat in $(seq 1 $REPEATS); do
             cmm=$(awk -F, '$3=="cache-misses"{print $1; exit}' "$perf_tmp")
             echo "$name,$input_len,$repeat,${cyc:--1},${ins:--1},${brm:--1},${cmm:--1}" >> "$PERF_CSV"
 
-            # Pull the HMB, line from dmesg (machine-readable)
-            hmb=$(dmesg | grep -oE 'HMB,[^[:space:]]+' | head -n1 || true)
-            if [ -n "$hmb" ]; then
-                # HMB,name,input_len,iterations,total_cycles,cycles_per_hash,checksum
-                # Drop "HMB," prefix, append repeat
-                echo "${hmb#HMB,},$repeat" >> "$DMESG_CSV"
+            # 從模組 pr_info 取數值。實際格式(非 HMB, CSV):
+            #   hash_microbench: <name> input_len=N iterations=N total_cycles=N cycles_per_hash=N.NN sink=N
+            line=$(dmesg | grep -E "hash_microbench: (jhash2|hsiphash|siphash) input_len=" | tail -n1 || true)
+            if [ -n "$line" ]; then
+                il=$(grep -oE 'input_len=[0-9]+'         <<<"$line" | cut -d= -f2)
+                it=$(grep -oE 'iterations=[0-9]+'        <<<"$line" | cut -d= -f2)
+                tc=$(grep -oE 'total_cycles=[0-9]+'      <<<"$line" | cut -d= -f2)
+                cph=$(grep -oE 'cycles_per_hash=[0-9.]+' <<<"$line" | cut -d= -f2)
+                echo "$name,$il,$it,$tc,$cph,NA,$repeat" >> "$DMESG_CSV"
             else
-                echo "  WARN: no HMB line in dmesg"
+                echo "  WARN: no hash_microbench result line in dmesg"
             fi
         done
     done

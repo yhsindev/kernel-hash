@@ -176,16 +176,41 @@ stateful 約為 stateless 的 4.6 倍；該條件下平均輸入長度約 136 by
 
 ---
 
-## 8. 範圍限定與後續
+## 8. 三種雜湊函式在 88 / 160 bytes 的 per-call 成本（microbench）
 
-### 8.1 限定
+§5 量到真實 megaflow 的兩個輸入長度（88、160 bytes）。以實驗一的 kernel microbenchmark（`hash_microbench`，module 內以 `rdtsc_ordered()` 量緊迴圈）在這兩個長度上量三種雜湊函式的 per-call cycles。資料與表格同見 `hash_microbench/README.md`。
+
+量測條件：`INPUT_LENS="88 160"`、iterations = 10,000,000、repeats = 5、kernel 6.8.0-124-generic（module 為當前 kernel 重建）。
+
+### 8.1 cycles per hash（mean ± 樣本標準差，N=5）
+
+| 輸入長度 | jhash2 | hsiphash | siphash |
+|---:|---:|---:|---:|
+| 88 | 85.84 ± 1.27 | 70.76 ± 0.34 | 130.92 ± 2.60 |
+| 160 | 157.32 ± 1.32 | 113.47 ± 0.78 | 214.45 ± 2.35 |
+
+每增加 1 byte（88→160，+72 bytes）的 cycles：jhash2 ≈ 1.00、hsiphash ≈ 0.59、siphash ≈ 1.16 cycles/byte。
+
+### 8.2 觀察
+
+- 在 88 與 160 兩個長度，hsiphash 的 cycles/hash 皆為三者最低、siphash 最高、jhash2 居中。
+- 三者的 cycles 隨長度成長；以每 byte 增量計，hsiphash 最低（≈0.59）、siphash 最高（≈1.16）。
+- 此兩點落在實驗一 v8 既有的長度–成本曲線上（88 介於 64 與 128 列之間、160 介於 128 與 256 列之間）。
+- 函式屬性（事實，非比較結論）：jhash2 為 unkeyed；hsiphash 與 siphash 為 keyed，於 64-bit 平台皆使用 128-bit 金鑰；siphash 輸出 64-bit 並 fold 成 32-bit，hsiphash 直接輸出 32-bit。
+- 此為隔離 microbenchmark 的 per-call 觀察，非 datapath in-situ 量測。in-situ 的相對排序另見 `exp2_report.md` 的 D-v3B perf run（hsiphash < jhash2 < siphash）。
+
+---
+
+## 9. 範圍限定與後續
+
+### 9.1 限定
 
 - 單節點、最小拓樸（3 端點、1 router、單一 stateful ACL 規則組），非 production 流量組成。
 - 各條件目前各一次量測。計數量大且比例乾淨（1:2 精確至四位），但重複性尚未確認。
 - 1 : 2 比例與雙向 ACL 的 pipeline 設定綁定；不同 ACL 方向 / zone 設計會改變比例，原因待逐項釐清。
-- 量測固定 jhash 雜湊函式；本報告不主張任何雜湊函式的成本優劣。
+- OVN datapath 的長度量測固定使用 jhash 雜湊函式；§8 的 per-call 成本為隔離 microbench 之觀察。本報告僅陳述量測值，不據此對「應採用何種雜湊函式」下結論。
 
-### 8.2 後續（範圍限定）
+### 9.2 後續（範圍限定）
 
 1. 將 OVN testbed 設定與 reload 後的 port rebind 收成可重跑 script，使換雜湊函式的 reload 可重複。
 2. 在 88 與 160 兩個長度上比較三種雜湊函式的 per-call 成本（microbench 或 OVN 流量驅動的 perf），先不擴張拓樸規模。

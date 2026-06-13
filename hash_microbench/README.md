@@ -260,6 +260,33 @@ Therefore, in this microbenchmark, the main performance difference is better exp
 
 `hsiphash()` has lower cycles/hash than `jhash2()` for longer inputs in this benchmark. This is reported as an observation, not as a universal conclusion, because cycles are affected by instruction-level parallelism, pipeline behavior, compiler implementation path, and CPU execution characteristics.
 
+## Result at OVS Megaflow Lengths (88 / 160 B)
+
+The lengths above (16–256 B) were chosen before the OVS datapath was profiled. Experiment 2 later measured the masked-key lengths that `flow_hash()` actually sees under a real OVN pipeline (single-node OVN, debugfs histogram of `range_n_bytes`):
+
+- **88 B** — stateless IPv4 megaflows. Constant regardless of L2-switched vs L3-routed path, TCP/ICMP, or address wildcarding, because the hashed range is a contiguous slice of `sw_flow_key` (metadata + Ethernet + IP header fields + L4 ports + IPv4 addresses), not the IP address alone.
+- **160 B** — post-conntrack lookups under stateful ACLs. The masked-key range extends to the conntrack fields at the tail of `sw_flow_key`.
+
+See `docs/exp2_ovn_report.md`. The microbenchmark was re-run at exactly these two lengths.
+
+Run: `INPUT_LENS="88 160" ./run_all.sh`, iterations = 10,000,000, repeats = 5, kernel 6.8.0-124-generic (module rebuilt for the running kernel).
+
+### Cycles per hash (mean ± sample SD, N=5)
+
+| Input length |        jhash2 |      hsiphash |       siphash |
+| -----------: | ------------: | ------------: | ------------: |
+|           88 |  85.84 ± 1.27 |  70.76 ± 0.34 | 130.92 ± 2.60 |
+|          160 | 157.32 ± 1.32 | 113.47 ± 0.78 | 214.45 ± 2.35 |
+
+Per-added-byte cost (88 → 160, +72 B): jhash2 ≈ 1.00, hsiphash ≈ 0.59, siphash ≈ 1.16 cycles/byte.
+
+### Observations
+
+- `hsiphash()` has the lowest cycles/hash at both real lengths: ~17% below `jhash2()` at 88 B and ~28% below at 160 B, while also being keyed (the `jhash2()` currently used by OVS is unkeyed).
+- `siphash()` is the most expensive. It uses the same 128-bit key as `hsiphash()`; the extra cost comes from its 64-bit output (folded to 32-bit here) and additional permutation rounds, not from a larger key.
+- The two points are consistent with the v8 length–cost curve: 88 B sits between the 64 B and 128 B rows, and 160 B between the 128 B and 256 B rows.
+- Reported as a controlled microbenchmark observation, not an in-situ datapath result. The in-situ relative ordering is cross-checked by the Experiment 2 D-v3B perf run (hsiphash < jhash2 < siphash).
+
 ## Current Status
 
 | Version | Purpose                                             | Result                                                                 |

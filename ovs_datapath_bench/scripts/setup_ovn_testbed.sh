@@ -33,11 +33,14 @@ vs set open . \
 	external-ids:ovn-encap-type=geneve \
 	external-ids:ovn-encap-ip=127.0.0.1
 
-# === 2. 清殘留 chassis/Encap,讓 ovn-controller 以 system-id=chassis-local 乾淨重註冊 ===
-#   reload 只重啟 ovs-vswitchd、不動 SB,舊 Encap 列會與 controller 新插入的撞唯一性約束。
-echo "=== 2. 清 chassis/Encap 並等重註冊 ==="
-sudo ovn-sbctl --all destroy Chassis 2>/dev/null || true
-sudo ovn-sbctl --all destroy Encap   2>/dev/null || true
+# === 2. 清殘留 chassis 三表,讓 ovn-controller 以 system-id=chassis-local 乾淨重註冊 ===
+#   reload 只重啟 ovs-vswitchd、不動 SB,舊列會與 controller 新插入的撞唯一性約束
+#   (Chassis_Private.name / Encap(type,ip))→ OVNSB commit 迴圈、port 永遠認領不了。
+#   三張表都要清:Chassis_Private、Chassis、Encap。
+echo "=== 2. 清 chassis 三表並等重註冊 ==="
+sudo ovn-sbctl --all destroy Chassis_Private 2>/dev/null || true
+sudo ovn-sbctl --all destroy Chassis         2>/dev/null || true
+sudo ovn-sbctl --all destroy Encap           2>/dev/null || true
 for _ in $(seq 1 15); do
 	sudo ovn-sbctl show 2>/dev/null | grep -q '^Chassis' && break
 	sleep 1
@@ -102,10 +105,22 @@ realize_port ovn1 ns_a 00:00:00:00:01:01 10.1.0.1/24 10.1.0.254 lp1
 realize_port ovn2 ns_b 00:00:00:00:01:02 10.1.0.2/24 10.1.0.254 lp2
 realize_port ovn3 ns_c 00:00:00:00:02:03 10.2.0.3/24 10.2.0.254 lp3
 
-# === 6. 等 ovn-controller 認領 port binding ===
-sleep 3
+# === 6. 等 ovn-controller 認領 port binding(以 ns_a -> ns_b ping 通為準)===
+echo "=== 6. 等 binding 收斂(ping gate)==="
+gate_ok=0
+for _ in $(seq 1 20); do
+	if sudo ip netns exec ns_a ping -c1 -W1 10.1.0.2 >/dev/null 2>&1; then
+		gate_ok=1; break
+	fi
+	sleep 1
+done
+if [ "$gate_ok" != 1 ]; then
+	echo "[WARN] ns_a -> ns_b 20s 內仍不通,binding 可能未收斂。" >&2
+	echo "       檢查: sudo ovn-sbctl list port_binding | grep -E 'logical_port|chassis '" >&2
+	echo "             sudo tail /var/log/ovn/ovn-controller.log" >&2
+fi
 
-echo "[OK] OVN testbed ready (STATEFUL=$STATEFUL)"
+echo "[OK] OVN testbed ready (STATEFUL=$STATEFUL, ping_gate=$gate_ok)"
 echo "  驗證: sudo ip netns exec ns_a ping -c2 10.1.0.2   # 同網 L2"
 echo "        sudo ip netns exec ns_a ping -c2 10.2.0.3   # 跨網 L3(經 lr0)"
 echo "  量測: echo reset | sudo tee /sys/kernel/debug/ovs_hashlen >/dev/null"
