@@ -1145,3 +1145,187 @@ A+B prefix 版失敗，應保留為負結論，不納入正式結果。
 * 證據：`dv3b_evidence_{jhash,hsiphash,siphash}/`、`ovs_flow_hash_backend_patch.diff`。
 * 工具：`run_dv3b_benchmark.sh`、`summarize_dv3b.py`、`collect_backend_evidence.sh`、`benchmark_runbook.md`（新）。
 * 機器現況：jhash backend 已載回（預設狀態）、D-v3B 規則仍裝著。
+
+## 2026-06-13 — Check-in：整理實驗二結果、確認證據鏈與準備報告素材
+
+### 今日方向
+
+* 實驗二的主要量測已在 6/12 完成：D-v3B workload、三個 backend、N=10、CPU0-scoped perf，以及 identity / flat / call-tree 證據都已收齊。
+* 今天不再跑新的 benchmark，也不修改程式或 workload。重點改為整理資料、確認自己是否真的理解結果，並準備寫進報告的素材。
+* 今天最重要的目標是把 6/12 的結果從「數字跑完」整理成「可以清楚解釋的方法與結論」。
+
+---
+
+### 今日任務
+
+#### 1. 重新讀懂 6/12 三份 evidence
+
+用 `dv3b_evidence_jhash`、`dv3b_evidence_hsiphash`、`dv3b_evidence_siphash` 作為主要材料，確認以下問題：
+
+* `children%` 和 `self%` 的差異。
+* 為什麼 jhash 會呈現 `self ≈ children`。
+* 為什麼 hsiphash / siphash 會呈現 `self 很小、children 較大`。
+* 為什麼需要 `ovs_flow_hash_backend()` noinline wrapper。
+* 為什麼不能直接看 flat symbol，例如全域 `__siphash_unaligned`。
+* caller-edge attribution 如何把成本限定在 OVS `flow_hash()` backend 之下。
+
+#### 2. 確認正式 benchmark 的變因控制
+
+逐項確認這次三 backend 比較是否公平：
+
+* 三組使用同一個 D-v3B workload。
+* 三組 flows、masks、hit/pkt 維持穩定。
+* 三組都使用 CPU0-scoped measurement。
+* CPU0 已達 CPU-bound 狀態，因此 Layer 3 system-level 指標可以解讀。
+* 三組都透過相同 wrapper 進入 hash backend。
+* patch 只改 hash backend selection / wrapper，不改 lookup logic。
+
+#### 3. 整理 derived metrics 的因果鏈
+
+把正式結果中的衍生指標重新算懂：
+
+* `cycles/pkt`：CPU0 每處理一個 packet 的平均 cycle 成本。
+* `hash_cycles/pkt`：用 `cycles/pkt × ovs_flow_hash_backend children%` 估計每包花在 hash backend 的成本。
+* `hash/lookup ratio`：用 `ovs_flow_hash_backend children% / masked_flow_lookup children%` 估計 hash 在 lookup path 中的佔比。
+* `estimated cycles per hash invocation`：用 `hash_cycles/pkt / hit/pkt` 估計每次 `flow_hash()` 呼叫成本。
+
+#### 4. 對照 Exp1 與 Exp2
+
+翻舊資料，確認 Exp1 kernel module microbenchmark 的 primitive-level 排序，並與 Exp2 OVS integration-level 排序比較。
+
+目標不是新增實驗，而是確認：
+
+* microbenchmark 與 OVS integration 是否方向一致。
+* 若一致，可作為互相印證。
+* 若不一致，則記錄可能原因，例如 input 長度、calling context、inline / out-of-line attribution、OVS lookup path overhead。
+
+#### 5. 準備報告素材
+
+整理可直接寫進報告的內容：
+
+* D-v3B workload 設計理由。
+* noinline wrapper 的必要性。
+* 三 backend formal benchmark 結果表。
+* identity / flat / call-tree evidence 的摘要。
+* 結論範圍限定：
+
+  * 本 workload
+  * 本 CPU
+  * kernel 6.8
+  * CPU0-bound pktgen setup
+  * wrapper-based OVS integration
+* 方法限制：
+
+  * 量到的是 integration-level cost，不是純 primitive microbenchmark。
+  * cycles/pkt 是 steady-state approximation。
+  * 每次 hash invocation 成本是估計值，不是精準 latency。
+
+---
+
+### 今日不做
+
+- 不跑新 benchmark、不改實驗/workload、不切 backend（機器停在 jhash）。
+- 不做 Layer 4 latency。
+
+---
+
+### 成功標準
+
+#### 最低標準
+
+* 能用自己的話說明為什麼主指標是 `ovs_flow_hash_backend children%`，而不是 flat `__siphash_unaligned` 或只看 `self%`。
+
+#### 中等標準
+
+* 能清楚解釋：
+
+  * jhash inline 證據。
+  * hsiphash / siphash out-of-line 證據。
+  * global symbol 撞名問題。
+  * wrapper 如何解決 attribution 不公平。
+  * `hash_cycles/pkt` 和 `hash/lookup ratio` 的算法與意義。
+* 完成 Exp1 與 Exp2 的結果對照。
+
+#### 高標準
+
+* 完成報告核心段落初稿：
+
+  * methodology validation
+  * D-v3B workload 設計
+  * 三 backend 結果表
+  * 結果解讀與範圍限定
+
+---
+
+### 預設下一步
+
+* 若今天理解與素材整理完成，下一步正式進入報告撰寫。
+* 報告主線依序寫：
+
+  1. 為什麼 baseline signal 不夠。
+  2. 為什麼設計 D-v3B multimask workload。
+  3. 為什麼需要 noinline wrapper。
+  4. 三 backend formal benchmark 結果。
+  5. identity / call-tree evidence 如何支持方法學。
+  6. 結論與限制。
+
+---
+
+### 今日核心原則
+
+今天不是繼續擴充實驗，而是把已完成的結果講清楚。
+
+實驗二目前已具備正式結果與證據鏈。今天的工作是確認自己能解釋每個數字的來源、每個指標的意義，以及這些證據如何支持最後的結論。
+
+---
+
+## 2026-06-13 — Check-out：轉向 P0（真實 megaflow 輸入長度）與三種雜湊函式在真實長度的成本
+
+### 今日目標
+
+原 check-in 計畫為整理實驗二素材、不跑新實驗。實際轉向 P0：在本機架 OVN，量真實 megaflow 在 `flow_hash()` 的輸入長度（masked-key `range_n_bytes`），並在量到的長度上比較三種雜湊函式 per-call 成本。報告素材整理改至後續日程。
+
+### 今日操作
+
+* 本機架單節點 OVN（OVS 2.17.9 + 自建 `openvswitch.ko`）：`ls0`/`ls1`/`lr0`，VIF 落地到 `ns_a`/`ns_b`/`ns_c`，並加一組雙向 stateful ACL。
+* `openvswitch.ko` 加 debugfs 量測樁 `/sys/kernel/debug/ovs_hashlen`：累計每次 `flow_hash()` 的 `range_n_bytes` 直方圖，可讀取與歸零；上界 512 + 溢位計數；init 印出 `sw_flow_key` 欄位 offset。
+* 量三情境的 masked-key 長度分布：L2 stateless、L2+L3 routed、stateful ACL（conntrack）。
+* microbench（`hash_microbench`，`INPUT_LENS="88 160"`、ITER=10M、N=5）量 jhash2/hsiphash/siphash 在 88 與 160 bytes 的 per-call cycles。
+* 工具化：`setup_ovn_testbed.sh`/`cleanup_ovn_testbed.sh`、histogram patch（`ovs_hashlen_debugfs.diff`）、`run_all.sh` 的 `INPUT_LENS` 可覆寫 + dmesg 解析修正。
+
+### 觀察結果
+
+| 情境 | 主要 hash_len | 88:160 計數比 | 初步解讀 |
+|---|---|---|---|
+| L2 stateless IPv4 | 88（單一） | — | L3/L4 全 wildcard |
+| L2 + L3 routed | 88（不變） | — | routed 解開更多欄位值，但長度不變 |
+| stateful ACL（conntrack） | 88 與 160 | 1 : 2 | post-ct lookup 延伸到 ct 區 |
+
+microbench cycles/hash（mean ± SD，N=5）：
+
+| 長度 | jhash2 | hsiphash | siphash |
+|---:|---:|---:|---:|
+| 88 | 85.84 ± 1.27 | 70.76 ± 0.34 | 130.92 ± 2.60 |
+| 160 | 157.32 ± 1.32 | 113.47 ± 0.78 | 214.45 ± 2.35 |
+
+* `sw_flow_key` 量到 sizeof=472、phy=320、ipv4=376、ct=448。
+* OVN bring-up 卡點：reload 後 `Chassis_Private`/`Encap` 殘留列撞唯一性約束 → OVNSB commit 迴圈、port 認領不了；清三表後解。
+
+### 目前判斷
+
+* masked-key 長度由「出現哪些協定層 / 是否走 conntrack」量子化，非 flow 精細度。機制：`update_range()` 取被觸碰欄位的 8-byte 對齊連續聯集，userspace 按協定層送 mask attribute。
+* 真實 OVN 流量下 `flow_hash()` 輸入為 88 與 160 的混合，非單一值；D-v3B 合成 workload 只覆蓋單一長度點，代表性有限。
+* microbench 排序 hsiphash < jhash2 < siphash，方向與實驗一 v8 曲線、實驗二 D-v3B in-situ children% 一致。
+* 範圍限定：各情境單次量測（計數乾淨但重複性未確認）；單節點最小拓樸；1:2 與雙向 ACL 設定綁定；microbench 為隔離量測非 in-situ。
+
+### 今日結論
+
+* 真實 OVN megaflow 在 `flow_hash()` 的輸入長度被量子化：stateless IPv4 = 88 bytes、post-conntrack = 160 bytes。
+* 變化 L3/L4 欄位值不改變輸入長度；conntrack 是延伸長度的主因。
+* 三種雜湊函式在 88/160 的 per-call cycles 排序為 hsiphash < jhash2 < siphash，與既有 in-situ 結果一致。
+
+### 下一步
+
+* 進實驗三（collision 與 bucket distribution，安全面）：先讀規格，設計 flow table 的 instrumentation（debugfs / tracepoint / eBPF 擇一），統計 bucket chain length、max chain depth、lookup probe count、bucket entropy、collision frequency。
+* 比較不同 flow set（隨機 / 連續 IP / 固定 dst IP / 變動 source port / 刻意搜尋 jhash collision）在三種雜湊函式下的分布差異。
+* 範圍先限定在 flow table 的 `find_bucket()` 路徑，暫不動 `flow_hash()` 以外。

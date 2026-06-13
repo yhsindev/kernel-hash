@@ -8,7 +8,14 @@
 
 * Experiment 1：kernel module microbenchmark，建立 hash function 純成本模型。
 * Experiment 2：OVS datapath benchmark，使用 D-v2-mid workload 建立約 10k UDP-specific datapath flows。
-* 目前優先任務：完成 `jhash` vs `hsiphash` 的第一版 mini benchmark，之後再考慮 `siphash`。
+* Experiment 3：collision 與 bucket distribution 分析（安全面）。量 `jhash` / `hsiphash` / `siphash` 在 OVS flow table 的雜湊分布品質：於 flow table 加 debugfs / tracepoint / eBPF instrumentation，統計 bucket chain length、maximum chain depth、lookup probe count、bucket entropy、collision frequency。比較不同 flow set 在三種雜湊函式下的分布差異：
+  * 隨機 flow、連續 IP flow、固定目的 IP、變動 source port（測一般分布均勻度）；
+  * 刻意搜尋 jhash collision 的 flow set（安全核心）：離線預算出一組在固定 seed 的 `jhash` 下撞同 bucket 的 key，展示其在 `jhash` 製造病態長 chain，但在 keyed 的 `hsiphash`/`siphash` 下散開 —— 直接演示 keyed hash 對 HashDoS 的抵抗。
+  * 對應內部：`flow_hash()` → `find_bucket(ti, hash)` 決定 bucket，同 bucket 的 flow 串成 hlist chain，`masked_flow_lookup()` 逐一比對；整張表共用 `ti->buckets`，故分布即「`flow_hash` 把 key 打散得好不好」。
+
+* 背景脈絡（數學/安全）：`hash_32()` 用 Fibonacci hashing 與黃金比例常數 `0x61c88647`（乘法雜湊取高位元改善 bucket 分散，Three-gap theorem）；`jhash`（Jenkins）追求低延遲高吞吐但 unkeyed；`siphash`/`hsiphash` 引入 secret key 抵抗 HashDoS 與 hashtable poisoning。Linux 並未全面改用 SipHash —— OVS datapath hot path（每秒數百萬次查表）下 hash latency / cache locality / branch behavior 比理論安全性更直接影響轉送效能；這正是本專題要量化的取捨。
+
+* 目前優先任務：Experiment 3 instrumentation。先做 lookup probe-count 直方圖（在 `masked_flow_lookup` 數走過的 hlist 節點，複用 `ovs_hashlen` 的 debugfs pattern），再視需要做 table snapshot（chain length 分布 / entropy / max depth）。
 
 ---
 
