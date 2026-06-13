@@ -1,4 +1,0 @@
-backend,n,ohash_children_mean,ohash_children_sd,ohash_self_mean,masked_children_mean,masked_children_sd,masked_self_mean,pps_mean,mhz_mean,flows_min,flows_max
-jhash,5,0.716,0.139,0.714,6.84,0.482,6.19,536809.0,4293.9,9752,9752
-hsiphash,5,0.408,0.096,0.018,6.836,0.499,6.26,515804.0,4332.8,9752,9754
-siphash,5,0.958,0.204,0.032,8.042,1.157,6.786,542063.0,4288.4,9752,9753

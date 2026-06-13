@@ -1,8 +1,8 @@
 system@ovs-system:
-  lookups: hit:227936699 missed:127748 lost:43856
-  flows: 2
-  masks: hit:235201183 total:1 hit/pkt:1.03
-  cache: hit:23169236 hit-rate:10.16%
+  lookups: hit:67126835 missed:99681 lost:20773
+  flows: 15439
+  masks: hit:184497429 total:7 hit/pkt:2.74
+  cache: hit:510515 hit-rate:0.76%
   caches:
     masks-cache: size:256
   port 0: ovs-system (internal)

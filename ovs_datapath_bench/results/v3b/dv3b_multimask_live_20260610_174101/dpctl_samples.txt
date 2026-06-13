@@ -1,0 +1,20 @@
+=== sample 1 ===
+  lookups: hit:42156728 missed:83303 lost:20773
+  flows: 15439
+  masks: hit:84685166 total:7 hit/pkt:2.00
+=== sample 2 ===
+  lookups: hit:44422856 missed:83303 lost:20773
+  flows: 15439
+  masks: hit:93735109 total:7 hit/pkt:2.11
+=== sample 3 ===
+  lookups: hit:46973889 missed:83303 lost:20773
+  flows: 15439
+  masks: hit:103918244 total:7 hit/pkt:2.21
+=== sample 4 ===
+  lookups: hit:49506350 missed:83303 lost:20773
+  flows: 15439
+  masks: hit:114030353 total:7 hit/pkt:2.30
+=== sample 5 ===
+  lookups: hit:52078491 missed:83303 lost:20773
+  flows: 15439
+  masks: hit:124300209 total:7 hit/pkt:2.38

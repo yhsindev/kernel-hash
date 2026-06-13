@@ -4,7 +4,7 @@
 # 前置:backend 已 reload、D-v3B 規則已裝。
 # 用法(repo 根): sudo -v && ./ovs_datapath_bench/scripts/collect_backend_evidence.sh siphash
 #
-# 產出 results/dv3b_evidence_<backend>/:
+# 產出 results/v3b/dv3b_evidence_<backend>/:
 #   identity.txt   — loaded/build srcversion + nm -u(證明沒載錯 module)
 #   calltree.txt   — perf callgraph 摘錄(wrapper → __*siphash_unaligned;jhash 看 flat self≈children)
 #   flat.txt       — flat 模式 ovs_flow_hash_backend / masked_flow_lookup 兩行
@@ -19,7 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 cd "$REPO_DIR"
 KO=kernel_work/linux-hwe-6.8-6.8.0/net/openvswitch/openvswitch.ko
-OUT="ovs_datapath_bench/results/dv3b_evidence_${BACKEND}"
+OUT="ovs_datapath_bench/results/v3b/dv3b_evidence_${BACKEND}"
 mkdir -p "$OUT"
 
 echo ">>> identity"

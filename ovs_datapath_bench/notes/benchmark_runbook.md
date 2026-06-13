@@ -261,18 +261,18 @@ jhash,3,9934512B440806A9DEFA77A,15439,7,4.00,9.04,8.99,28.52,20.49,44043835232,7
 jhash,4,9934512B440806A9DEFA77A,15439,7,4.00,8.86,8.82,28.08,20.33,44017467248,78708979371,1.79,66.78,822833
 >>> run 5/5
 jhash,5,9934512B440806A9DEFA77A,15439,7,4.00,9.3,9.26,28.07,19.88,44029636616,78229679995,1.78,66.79,825202
->>> done: jhash x 5 已寫入 ovs_datapath_bench/results/dv3b_formal_perf.csv
+>>> done: jhash x 5 已寫入 ovs_datapath_bench/results/v3b/dv3b_formal_perf.csv
 >>> 產 summary: python3 ovs_datapath_bench/scripts/summarize_dv3b.py
 backend   |  n |    ohash_ch% |   masked_ch% | hit/pkt |  cyc/pkt | hash cyc/pkt | h/l ratio |  %soft
 -----------------------------------------------------------------------------------------------------
 jhash     | 10 |   8.72± 0.63 |  30.60± 3.97 |    4.01 |     5598 |          488 |     28.5% |   68.2
 
-[OK] wrote ovs_datapath_bench/results/dv3b_formal_summary.csv
+[OK] wrote ovs_datapath_bench/results/v3b/dv3b_formal_summary.csv
 備註: sd=樣本標準差(n-1); cycles/packet 為 CPU0 全部工作(含 pktgen 產包)÷ 封包數;
       hash_cycles_per_packet = cycles/packet × ohash_children%; 視窗=10s。
 iris@linux:~/projects/kernel-hash$ cd ~/projects/kernel-hash
-mv ovs_datapath_bench/results/dv3b_formal_perf.csv \
-   ovs_datapath_bench/results/dv3b_pilot_jhash_20260612.csv
+mv ovs_datapath_bench/results/v3b/dv3b_formal_perf.csv \
+   ovs_datapath_bench/results/v3b/dv3b_pilot_jhash_20260612.csv
 sudo -v
 ./ovs_datapath_bench/scripts/run_dv3b_benchmark.sh jhash 10   # ~8 分鐘,人離開機器
 python3 ovs_datapath_bench/scripts/summarize_dv3b.py
@@ -300,13 +300,13 @@ jhash,8,9934512B440806A9DEFA77A,15439,7,4.00,9.71,9.68,26.84,18.28,44568296639,8
 jhash,9,9934512B440806A9DEFA77A,15439,7,4.00,9.39,9.35,27.28,19.08,44552659854,80997762688,1.82,66.33,852361
 >>> run 10/10
 jhash,10,9934512B440806A9DEFA77A,15439,7,4.00,9.27,9.22,27.1,18.94,44592780664,80446933677,1.80,66.52,847797
->>> done: jhash x 10 已寫入 ovs_datapath_bench/results/dv3b_formal_perf.csv
+>>> done: jhash x 10 已寫入 ovs_datapath_bench/results/v3b/dv3b_formal_perf.csv
 >>> 產 summary: python3 ovs_datapath_bench/scripts/summarize_dv3b.py
 backend   |  n |    ohash_ch% |   masked_ch% | hit/pkt |  cyc/pkt | hash cyc/pkt | h/l ratio |  %soft
 -----------------------------------------------------------------------------------------------------
 jhash     | 10 |   9.50± 0.14 |  27.05± 0.33 |    4.00 |     5228 |          497 |     35.1% |   66.3
 
-[OK] wrote ovs_datapath_bench/results/dv3b_formal_summary.csv
+[OK] wrote ovs_datapath_bench/results/v3b/dv3b_formal_summary.csv
 備註: sd=樣本標準差(n-1); cycles/packet 為 CPU0 全部工作(含 pktgen 產包)÷ 封包數;
       hash_cycles_per_packet = cycles/packet × ohash_children%; 視窗=10s。
 

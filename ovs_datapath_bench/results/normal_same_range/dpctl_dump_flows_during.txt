@@ -1,2 +1,0 @@
-recirc_id(0),in_port(3),eth(src=b2:8b:32:82:cc:35,dst=36:a0:a0:91:a1:8f),eth_type(0x0800),ipv4(frag=no), packets:19, bytes:1748, used:2.434s, actions:2
-recirc_id(0),in_port(2),eth(src=36:a0:a0:91:a1:8f,dst=b2:8b:32:82:cc:35),eth_type(0x0800),ipv4(frag=no), packets:10128885, bytes:648248640, used:1.478s, actions:3

@@ -1,0 +1,26 @@
+[INFO] D-v3B multimask pktgen
+[INFO] ns=ns1 dev=veth1 duration=30s
+[INFO] src_ip=10.0.1.1-16
+[INFO] dst_ip=10.0.2.1-8
+[INFO] src_port=20000-20063
+[INFO] dst_port=9000-9015
+Params: count 0  min_pkt_size: 64  max_pkt_size: 64
+     frags: 0  delay: 0  clone_skb: 0  ifname: veth1@0
+     flows: 0 flowlen: 0
+     queue_map_min: 0  queue_map_max: 0
+     dst_min: 10.0.2.1  dst_max: 10.0.2.8
+     src_min: 10.0.1.1  src_max: 10.0.1.16
+     src_mac: 6a:f7:b3:5b:46:dd dst_mac: 00:00:00:00:00:00
+     udp_src_min: 20000  udp_src_max: 20063  udp_dst_min: 9000  udp_dst_max: 9015
+     src_mac_count: 0  dst_mac_count: 0
+     Flags: IPSRC_RND  IPDST_RND  UDPSRC_RND  UDPDST_RND  SHARED  
+Current:
+     pkts-sofar: 23150186  errors: 0
+     started: 9285041424us  stopped: 9314939195us idle: 5761us
+     seq_num: 23150187  cur_dst_mac_offset: 0  cur_src_mac_offset: 0
+     cur_saddr: 10.0.1.12  cur_daddr: 10.0.2.3
+     cur_udp_dst: 9013  cur_udp_src: 20010
+     cur_queue_map: 0
+     flows: 0
+Result: OK: 29897770(c29892008+d5761) usec, 23150186 (64byte,0frags)
+  774311pps 396Mb/sec (396447232bps) errors: 0

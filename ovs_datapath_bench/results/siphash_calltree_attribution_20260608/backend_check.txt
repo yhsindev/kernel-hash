@@ -1,6 +1,0 @@
-=== backend identity ===
-75AA9FCC444232089DB6AD7
-srcversion:     75AA9FCC444232089DB6AD7
-                 U __siphash_unaligned
-                 U __skb_get_hash
-                 U __skb_get_hash_symmetric

@@ -1,0 +1,3 @@
+     pkts-sofar: 22567574  errors: 0
+Result: OK: 29952965(c29947183+d5782) usec, 22567574 (64byte,0frags)
+  753433pps 385Mb/sec (385757696bps) errors: 0

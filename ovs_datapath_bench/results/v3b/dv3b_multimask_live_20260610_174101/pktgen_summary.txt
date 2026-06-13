@@ -1,0 +1,4 @@
+=== pktgen summary ===
+     pkts-sofar: 23150186  errors: 0
+Result: OK: 29897770(c29892008+d5761) usec, 23150186 (64byte,0frags)
+  774311pps 396Mb/sec (396447232bps) errors: 0

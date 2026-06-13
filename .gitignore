@@ -24,7 +24,10 @@ __pycache__/
 *.pyc
 kernel_work/
 
+# Local-only result bucket: not published (kept off cloud)
+ovs_datapath_bench/results/else/
+
 # Large per-run dumps under results/ (regenerable; keep only small summaries)
-ovs_datapath_bench/results/*/dpctl_dump_flows*.txt
-ovs_datapath_bench/results/*/ofctl_dump_flows*.txt
-ovs_datapath_bench/results/*/perf_report_*.txt
+ovs_datapath_bench/results/**/dpctl_dump_flows*.txt
+ovs_datapath_bench/results/**/ofctl_dump_flows*.txt
+ovs_datapath_bench/results/**/perf_report_*.txt

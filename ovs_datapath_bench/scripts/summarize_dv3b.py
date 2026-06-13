@@ -2,15 +2,15 @@
 """summarize_dv3b.py — 從 dv3b_formal_perf.csv 產 per-backend summary(mean/sd + derived metrics)。
 
 用法(repo 根目錄): python3 ovs_datapath_bench/scripts/summarize_dv3b.py
-輸出: 終端表格 + ovs_datapath_bench/results/dv3b_formal_summary.csv
+輸出: 終端表格 + ovs_datapath_bench/results/v3b/dv3b_formal_summary.csv
 """
 import csv
 import statistics as st
 from collections import defaultdict
 from pathlib import Path
 
-CSV_IN = Path("ovs_datapath_bench/results/dv3b_formal_perf.csv")
-CSV_OUT = Path("ovs_datapath_bench/results/dv3b_formal_summary.csv")
+CSV_IN = Path("ovs_datapath_bench/results/v3b/dv3b_formal_perf.csv")
+CSV_OUT = Path("ovs_datapath_bench/results/v3b/dv3b_formal_summary.csv")
 PERF_WINDOW_S = 10  # perf stat 視窗長度,封包數 = pps × 視窗
 
 rows = list(csv.DictReader(CSV_IN.open()))

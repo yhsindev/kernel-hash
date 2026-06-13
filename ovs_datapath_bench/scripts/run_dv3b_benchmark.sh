@@ -17,7 +17,7 @@ BACKEND="${1:?用法: run_dv3b_benchmark.sh <backend> [N]}"
 N="${2:-5}"
 CORE="${CORE:-0}"                       # 轉發核心(step 4 gate 定為 CPU 0)
 TOOL_CORE="${TOOL_CORE:-3}"             # 量測工具(perf/mpstat user-space)pin 到的核:遠離 CORE 與其 SMT 雙生核(0,6)
-CSV="${CSV:-ovs_datapath_bench/results/dv3b_formal_perf.csv}"
+CSV="${CSV:-ovs_datapath_bench/results/v3b/dv3b_formal_perf.csv}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
