@@ -1,0 +1,274 @@
+diff --git a/net/openvswitch/flow_table.c b/net/openvswitch/flow_table.c
+index 898b7b8..473f97f 100644
+--- a/net/openvswitch/flow_table.c
++++ b/net/openvswitch/flow_table.c
+@@ -14,6 +14,7 @@
+ #include <net/llc_pdu.h>
+ #include <linux/kernel.h>
+ #include <linux/jhash.h>
++#include <linux/siphash.h>
+ #include <linux/jiffies.h>
+ #include <linux/llc.h>
+ #include <linux/module.h>
+@@ -646,25 +647,181 @@ int ovs_flow_tbl_flush(struct flow_table *flow_table)
+ #define OVS_FLOW_HASH_HSIPHASH  0
+ #define OVS_FLOW_HASH_SIPHASH   0
+ 
+-static u32 flow_hash(const struct sw_flow_key *key,
+-		     const struct sw_flow_key_range *range)
++/* TEMP 診斷:每次 flow_hash 呼叫累加 masked-key 長度(range_n_bytes)直方圖,
++ * 經 debugfs /sys/kernel/debug/ovs_hashlen 讀取(cat)與歸零(任意 echo 寫入)。
++ * 量測 cycle 前務必設回 0(這段每包都會跑,atomic inc 會污染 perf)。 */
++#define OVS_FLOW_HASH_DEBUG_LEN  1
++
++static const hsiphash_key_t ovs_flow_hsiphash_key = {
++	.key = { 0x0706050403020100UL, 0x0f0e0d0c0b0a0908UL },
++};
++
++static const siphash_key_t ovs_flow_siphash_key = {
++	.key = { 0x0706050403020100ULL, 0x0f0e0d0c0b0a0908ULL },
++};
++
++#if OVS_FLOW_HASH_DEBUG_LEN
++#include <linux/debugfs.h>
++#include <linux/seq_file.h>
++
++/* masked-key length(range_n_bytes)直方圖:file-scope state,供 debugfs 讀取/歸零。
++ * hash_len 0..OVS_HASHLEN_MAX-1 各一格,超出者計入 ovs_hash_over(避免靜默漏計);
++ * 每次 ovs_flow_hash_backend() 呼叫累加。conntrack flow 的 range 會延伸到 sw_flow_key
++ * 尾端的 ct 區,長度可達 ~200+ bytes,故上界放寬到 512 足以涵蓋整把 key。 */
++#define OVS_HASHLEN_MAX 512
++static atomic64_t ovs_hash_hist[OVS_HASHLEN_MAX];
++static atomic64_t ovs_hash_over;	/* hash_len >= OVS_HASHLEN_MAX 的計數 */
++static atomic64_t ovs_hash_calls;
++static struct dentry *ovs_hashlen_dentry;
++
++static int ovs_hashlen_show(struct seq_file *m, void *v)
++{
++	s64 total = atomic64_read(&ovs_hash_calls);
++	s64 over = atomic64_read(&ovs_hash_over);
++	int i;
++
++	seq_puts(m, "# ovs_flow_hash_backend masked-key length histogram\n");
++	seq_printf(m, "# total_calls %lld\n", total);
++	seq_printf(m, "# overflow(>=%d) %lld\n", OVS_HASHLEN_MAX, over);
++	seq_puts(m, "# hash_len count\n");
++	for (i = 0; i < OVS_HASHLEN_MAX; i++) {
++		s64 c = atomic64_read(&ovs_hash_hist[i]);
++
++		if (c)
++			seq_printf(m, "%d %lld\n", i, c);
++	}
++	return 0;
++}
++
++static int ovs_hashlen_open(struct inode *inode, struct file *file)
++{
++	return single_open(file, ovs_hashlen_show, NULL);
++}
++
++/* 任何寫入都將直方圖與呼叫計數歸零(灌測試流量前清乾淨用)。 */
++static ssize_t ovs_hashlen_write(struct file *file, const char __user *buf,
++				 size_t count, loff_t *ppos)
++{
++	int i;
++
++	for (i = 0; i < OVS_HASHLEN_MAX; i++)
++		atomic64_set(&ovs_hash_hist[i], 0);
++	atomic64_set(&ovs_hash_over, 0);
++	atomic64_set(&ovs_hash_calls, 0);
++	return count;
++}
++
++static const struct file_operations ovs_hashlen_fops = {
++	.owner   = THIS_MODULE,
++	.open    = ovs_hashlen_open,
++	.read    = seq_read,
++	.llseek  = seq_lseek,
++	.release = single_release,
++	.write   = ovs_hashlen_write,
++};
++
++/* 實驗三:lookup probe-count 直方圖。每次 masked_flow_lookup() 走過的 hlist 節點數
++ * 計一筆(空 bucket=0,命中於第 n 個=n,未命中=整條 chain 長度),反映 flow_hash 的
++ * bucket 分布品質;probes 0..OVS_PROBELEN_MAX-1 各一格,超出計入 over。
++ * 讀取/歸零經 debugfs /sys/kernel/debug/ovs_probelen。 */
++#define OVS_PROBELEN_MAX 1024
++static atomic64_t ovs_probe_hist[OVS_PROBELEN_MAX];
++static atomic64_t ovs_probe_over;
++static atomic64_t ovs_probe_calls;
++static struct dentry *ovs_probelen_dentry;
++
++static void ovs_record_probe(unsigned int probes)
++{
++	if (probes < OVS_PROBELEN_MAX)
++		atomic64_inc(&ovs_probe_hist[probes]);
++	else
++		atomic64_inc(&ovs_probe_over);
++	atomic64_inc(&ovs_probe_calls);
++}
++
++static int ovs_probelen_show(struct seq_file *m, void *v)
+ {
+-	const u32 *hash_key = (const u32 *)((const u8 *)key + range->start);
++	s64 total = atomic64_read(&ovs_probe_calls);
++	s64 over = atomic64_read(&ovs_probe_over);
++	int i;
+ 
+-	/* Make sure number of hash bytes are multiple of u32. */
+-	int hash_u32s = range_n_bytes(range) >> 2;
++	seq_puts(m, "# masked_flow_lookup probe-count histogram\n");
++	seq_printf(m, "# total_lookups %lld\n", total);
++	seq_printf(m, "# overflow(>=%d) %lld\n", OVS_PROBELEN_MAX, over);
++	seq_puts(m, "# probes count\n");
++	for (i = 0; i < OVS_PROBELEN_MAX; i++) {
++		s64 c = atomic64_read(&ovs_probe_hist[i]);
+ 
++		if (c)
++			seq_printf(m, "%d %lld\n", i, c);
++	}
++	return 0;
++}
++
++static int ovs_probelen_open(struct inode *inode, struct file *file)
++{
++	return single_open(file, ovs_probelen_show, NULL);
++}
++
++static ssize_t ovs_probelen_write(struct file *file, const char __user *buf,
++				  size_t count, loff_t *ppos)
++{
++	int i;
++
++	for (i = 0; i < OVS_PROBELEN_MAX; i++)
++		atomic64_set(&ovs_probe_hist[i], 0);
++	atomic64_set(&ovs_probe_over, 0);
++	atomic64_set(&ovs_probe_calls, 0);
++	return count;
++}
++
++static const struct file_operations ovs_probelen_fops = {
++	.owner   = THIS_MODULE,
++	.open    = ovs_probelen_open,
++	.read    = seq_read,
++	.llseek  = seq_lseek,
++	.release = single_release,
++	.write   = ovs_probelen_write,
++};
++#endif /* OVS_FLOW_HASH_DEBUG_LEN */
++
++/* Keep this wrapper out-of-line so perf can attribute backend hash cost. */
++static noinline u32 ovs_flow_hash_backend(const void *hash_data,
++					  size_t hash_len)
++{
++#if OVS_FLOW_HASH_DEBUG_LEN
++	/* 每次呼叫累加 masked-key 長度直方圖;讀取/歸零經 debugfs ovs_hashlen。 */
++	if (hash_len < OVS_HASHLEN_MAX)
++		atomic64_inc(&ovs_hash_hist[hash_len]);
++	else
++		atomic64_inc(&ovs_hash_over);
++	atomic64_inc(&ovs_hash_calls);
++#endif
+ #if OVS_FLOW_HASH_JHASH
+-	return jhash2(hash_key, hash_u32s, 0);
++	return jhash2((const u32 *)hash_data, (u32)(hash_len >> 2), 0);
+ #elif OVS_FLOW_HASH_HSIPHASH
+-#error "OVS_FLOW_HASH_HSIPHASH is not implemented yet"
++	return hsiphash(hash_data, hash_len, &ovs_flow_hsiphash_key);
+ #elif OVS_FLOW_HASH_SIPHASH
+-#error "OVS_FLOW_HASH_SIPHASH is not implemented yet"
++	{
++		u64 h = siphash(hash_data, hash_len, &ovs_flow_siphash_key);
++
++		/* flow_hash() returns u32, so fold SipHash's 64-bit output. */
++		return (u32)(h ^ (h >> 32));
++	}
+ #else
+ #error "No OVS flow hash backend selected"
+ #endif
+ }
+ 
++static u32 flow_hash(const struct sw_flow_key *key,
++		     const struct sw_flow_key_range *range)
++{
++	const void *hash_data = (const u8 *)key + range->start;
++
++	return ovs_flow_hash_backend(hash_data, range_n_bytes(range));
++}
++
++
+ static int flow_key_start(const struct sw_flow_key *key)
+ {
+ 	if (key->tun_proto)
+@@ -716,6 +873,9 @@ static struct sw_flow *masked_flow_lookup(struct table_instance *ti,
+ 	struct hlist_head *head;
+ 	u32 hash;
+ 	struct sw_flow_key masked_key;
++#if OVS_FLOW_HASH_DEBUG_LEN
++	unsigned int probes = 0;	/* 走過的 hlist 節點數(實驗三:probe count) */
++#endif
+ 
+ 	ovs_flow_mask_key(&masked_key, unmasked, false, mask);
+ 	hash = flow_hash(&masked_key, &mask->range);
+@@ -724,10 +884,20 @@ static struct sw_flow *masked_flow_lookup(struct table_instance *ti,
+ 
+ 	hlist_for_each_entry_rcu(flow, head, flow_table.node[ti->node_ver],
+ 				 lockdep_ovsl_is_held()) {
++#if OVS_FLOW_HASH_DEBUG_LEN
++		probes++;
++#endif
+ 		if (flow->mask == mask && flow->flow_table.hash == hash &&
+-		    flow_cmp_masked_key(flow, &masked_key, &mask->range))
++		    flow_cmp_masked_key(flow, &masked_key, &mask->range)) {
++#if OVS_FLOW_HASH_DEBUG_LEN
++			ovs_record_probe(probes);
++#endif
+ 			return flow;
++		}
+ 	}
++#if OVS_FLOW_HASH_DEBUG_LEN
++	ovs_record_probe(probes);
++#endif
+ 	return NULL;
+ }
+ 
+@@ -1221,12 +1391,39 @@ int ovs_flow_init(void)
+ 		return -ENOMEM;
+ 	}
+ 
++#if OVS_FLOW_HASH_DEBUG_LEN
++	/* /sys/kernel/debug/ovs_hashlen:cat 讀直方圖,任意 echo 寫入歸零。
++	 * 建檔失敗不視為致命(debugfs 可能未掛載)。 */
++	ovs_hashlen_dentry = debugfs_create_file("ovs_hashlen", 0644, NULL,
++						 NULL, &ovs_hashlen_fops);
++
++	/* /sys/kernel/debug/ovs_probelen:masked_flow_lookup 的 probe-count 直方圖。 */
++	ovs_probelen_dentry = debugfs_create_file("ovs_probelen", 0644, NULL,
++						  NULL, &ovs_probelen_fops);
++
++	/* 一次性印出 sw_flow_key 各區段 offset,供把 hash_len 對回欄位:
++	 * masked-key range = [rounddown(phy,8), roundup(欄位尾,8)),長度=range_n_bytes。 */
++	pr_info("ovs_hashlen: sizeof(sw_flow_key)=%zu phy=%zu eth=%zu ip=%zu tp=%zu ipv4=%zu ipv6=%zu ct=%zu\n",
++		sizeof(struct sw_flow_key),
++		offsetof(struct sw_flow_key, phy),
++		offsetof(struct sw_flow_key, eth),
++		offsetof(struct sw_flow_key, ip),
++		offsetof(struct sw_flow_key, tp),
++		offsetof(struct sw_flow_key, ipv4),
++		offsetof(struct sw_flow_key, ipv6),
++		offsetof(struct sw_flow_key, ct));
++#endif
++
+ 	return 0;
+ }
+ 
+ /* Uninitializes the flow module. */
+ void ovs_flow_exit(void)
+ {
++#if OVS_FLOW_HASH_DEBUG_LEN
++	debugfs_remove(ovs_hashlen_dentry);
++	debugfs_remove(ovs_probelen_dentry);
++#endif
+ 	kmem_cache_destroy(flow_stats_cache);
+ 	kmem_cache_destroy(flow_cache);
+ }
