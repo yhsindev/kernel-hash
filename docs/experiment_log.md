@@ -1329,3 +1329,111 @@ microbench cycles/hash（mean ± SD，N=5）：
 * 進實驗三（collision 與 bucket distribution，安全面）：先讀規格，設計 flow table 的 instrumentation（debugfs / tracepoint / eBPF 擇一），統計 bucket chain length、max chain depth、lookup probe count、bucket entropy、collision frequency。
 * 比較不同 flow set（隨機 / 連續 IP / 固定 dst IP / 變動 source port / 刻意搜尋 jhash collision）在三種雜湊函式下的分布差異。
 * 範圍先限定在 flow table 的 `find_bucket()` 路徑，暫不動 `flow_hash()` 以外。
+
+---
+
+## 2026-06-15 — Check-in：實驗三（collision 與 bucket distribution）起步
+
+### 今日方向
+
+進入實驗三，量化雜湊函式在 OVS flow table 的**分布品質與抗碰撞**（安全面），補上「security-performance trade-off」中先前較薄弱的安全半邊。今天的範圍限定在：建立量測 instrumentation、取得 jhash baseline、把後續三雜湊函式對照所需的「flow set 植入」與「jhash-collision 離線搜尋」兩個前置設計定下來。今天不追求完成全部對照。
+
+對應內部路徑（量測對象）：`flow_hash(masked_key, &mask->range)` → `find_bucket(ti, hash)` = `&ti->buckets[hash & (n_buckets-1)]` 決定 bucket → 同 bucket 之 flow 串成 hlist chain，`masked_flow_lookup()` 逐一比對。整張表共用 `ti->buckets`，故 bucket 分布即「`flow_hash` 把 key 打散得好不好」；換 jhash/hsiphash/siphash（既有 macro）即改變此分布。
+
+### 今日任務
+
+1. **probe-count instrumentation（最小可用）**
+   * 於 `masked_flow_lookup()` 累計每次走過的 hlist 節點數（空 bucket=0、命中於第 n 個=n、未命中=整條 chain 長度），做成直方圖經 debugfs `/sys/kernel/debug/ovs_probelen` 暴露（讀取 + 歸零），複用 `ovs_hashlen` pattern。
+   * 全程以 `OVS_FLOW_HASH_DEBUG_LEN` gate，非 debug build 不留痕跡（避免污染後續 cycle 量測）。
+
+2. **jhash baseline 量測**
+   * reload 含 probe 樁的模組（jhash）→ 裝 dv3b 多 mask 規則建 ~15k flows → 歸零 → pktgen 灌流量 → 讀 probe-count 分布。
+   * 目的：確認樁隨流量反應、且 jhash 正常工作負載下分布良好（probe 集中於小值）。此為對照基準，不是攻擊情境。
+
+3. **metrics 定義對齊**（為後續對照與報告先講清楚）
+   * bucket chain length / maximum chain depth：走 `ti->buckets` 各 hlist 長度（需 table snapshot，見任務 5）。
+   * lookup probe count：任務 1 的直方圖。
+   * bucket entropy：佔用分布的 Shannon entropy，`H = -Σ p_i log2 p_i`，`p_i = bucket_i 內 flow 數 / 總 flow 數`；均勻分布趨近 `log2(n_buckets)`。
+   * collision frequency：chain≥2 的 bucket 數，或 `Σ max(0, chain_len-1) / 總 flow 數`。
+
+4. **flow set 植入方式設計（前置）**
+   * 五組：隨機 / 連續 IP / 固定目的 IP / 變動 source port / 刻意 jhash-collision。
+   * 取捨：pktgen / OVN（透過 upcall 自動裝 megaflow，key 粒度受 wildcard 影響、較粗）vs `ovs-dpctl add-flow` 或 netlink flow API（可精準指定 datapath flow 的 key/mask）。collision set 需精準控制 key，傾向 netlink/`ovs-dpctl add-flow`。
+
+5. **jhash-collision 離線搜尋可行性（探索）**
+   * OVS 的 jhash2 seed 固定為 0，可離線重算 → 找一組撞同 bucket 的 masked key。
+   * 待釐清（見下）：bucket index 取決於 `n_buckets`，而 `table_instance` 會隨 flow 數成長 rehash → 搜尋目標要鎖定（固定 n_buckets 的低位元 vs 完整 32-bit hash 相等）。今天只驗可行性，不要求產出完整 set。
+
+### 今日不做
+
+* 不做三雜湊函式的完整對照量測（先把 jhash baseline 與管線、前置設計弄好）。
+* 不改 `flow_hash()` 與 lookup 比對邏輯本身；table snapshot 若做，只讀不改。
+* 暫不上 tracepoint / eBPF（先用 debugfs，與既有工具鏈一致；之後若需 per-lookup 動態量測再評估）。
+* 不擴張 OVN 拓樸；baseline 用既有 dv3b pktgen 工作負載即可。
+
+### 成功標準
+
+**最低**
+* `ovs_probelen` 讀得到、`total_lookups` 非 0；jhash baseline 在 dv3b 工作負載下 probe 分布合理（集中於 0–2）。
+
+**中等**
+* flow set 植入方式拍板（pktgen/OVN vs netlink），五組各自的產生方法寫定。
+* 四個 metric 的計算定義與資料來源對齊（probe 直方圖 + table snapshot 各負責哪些）。
+
+**高**
+* table snapshot 雛形可讀（能輸出 chain length 分布 / max depth / 由其算 entropy 與 collision frequency）。
+* 或：jhash-collision 離線搜尋驗證可行（能產出一小組撞同 bucket 的 key，並說明鎖定 n_buckets 的方式）。
+
+### 預設下一步
+
+* 三雜湊函式各 reload，同一 flow set 量 probe-count（+ snapshot 的 entropy / chain length）做對照。
+* 注入 jhash-collision set：展示其在 jhash 製造病態長 chain、在 keyed 的 hsiphash/siphash 下散開 —— 安全核心論證（keyed hash 抗 HashDoS）。
+
+### 待釐清
+
+* `table_instance` rehash 時機與 `n_buckets` 計算：決定 collision 搜尋鎖定低位元還是完整 hash。
+* table snapshot 從 debugfs handler 取得 `dp->table` 的方式（全域指標 vs 遍歷 datapath；與 RCU/locking 的相容）。
+* megaflow wildcard 對「攻擊者可控 entropy」的限制：unwildcarded 欄位才是 collision 可操作的部分。
+
+---
+
+## 2026-06-15 — Check-out：實驗三 reframe + Part 2 主實驗完成
+
+### 今日操作
+
+* 將實驗三 reframe 為「**通用 hash-table bucket-load robustness,OVS 為 case study**」(三 Part / 三 RQ);資料夾 `ovs_security/`,README 為入口。
+* deep-research 文獻回顧 → `notes/related_work.md`(cited、信心分級);Part 1 數學 → `notes/formal_model.md`。
+* **Part 2 generic harness**(`bucket_bench/`:kernel module + run/parse)建好並跑出五組 flow set × 三雜湊。
+* **Part 3 instrumentation**:`ovs_probelen`(masked_flow_lookup probe-count)+ `ovs_buckets`(table snapshot,RCU-safe 走 `ti->buckets`)建好;patch 留存。
+* 記錄 OVS `find_bucket` 的 `jhash_1word(flow_hash, 隨機 hash_seed)` 兩層結構(formal_model §5)。
+
+### 觀察結果
+
+Part 2(n=m=4096,α=1):
+
+| key set | jhash2 | hsiphash | siphash |
+|---|---|---|---|
+| random / seq_ip / fixed_dst / vary_srcport | Lmax 5–7、H_norm~0.93 | 同 | 同 |
+| collision-vs-jhash | **Lmax=4096、H_norm=0** | Lmax=7、~0.93 | Lmax=7、~0.93 |
+
+* 良性四組分布通過 **Poisson(1) χ² 擬合**(χ²=4.96 < 臨界 11.07);`E[C]`、`H_norm` 理論值皆吻合。
+* collision 構造成本 tries≈16.6M ≈ `K·m`。
+
+### 目前判斷
+
+* 良性下三雜湊**統計上不可區分**(皆 Poisson)→ 雜湊選擇是「安全決策」,非「良性分布決策」。
+* targeted-bucket adversarial selection 足以演示安全對比;lookup3 differential 屬 research-level、**不在範圍**(承認其存在即可)。
+* OVS `find_bucket` 有隨機 32-bit hash_seed → 通用攻擊(Part 2)直接成立;OVS(Part 3)的 targeted-bucket 需 seed(模擬回復)或 full-hash-collision(繞過,但不做 differential)。
+* 範圍限定:Part 2 generic、α=1、單次量測;`Θ(log n/log log n)` 確切常數待查證 Raab-Steger。
+
+### 今日結論
+
+* **Part 2 主實驗完成**:良性 → 三雜湊皆符合 balls-into-bins(Poisson)基準;adversarial(targeted-bucket vs jhash)→ 僅 unkeyed jhash 退化為單一 bucket(`Lmax=n`、`O(n²)`),keyed hsiphash/siphash 維持基準。
+* 研究結構與文獻基礎到位(Part 1 數學、Part 2 主實驗、Part 3 樁 + OVS baseline)。
+* Part 3 攻擊方向定為 **targeted-bucket adversarial selection**(明確不主張 jhash differential)。
+
+### 下一步
+
+* 讀文獻定稿 Part 1 數學(`L_max`、√-bound 已自行推對)。
+* Part 3 OVS case study:決定 (i) 讀 `hash_seed` 模擬 recovered-seed 攻擊,或 (ii) 良性 snapshot + 註明;以 `ovs_probelen`/`ovs_buckets` 量。
+* 範圍先限 `flow_hash` 替換,不重構 `find_bucket`。

@@ -1,0 +1,13 @@
+# kernel module build artifacts (regenerable via `make`)
+*.ko
+*.o
+*.mod
+*.mod.c
+*.cmd
+.*.cmd
+*.symvers
+modules.order
+.tmp_versions/
+
+# run output (canonical copy kept in ../results/part2_bucket_bench_raw.txt)
+results/

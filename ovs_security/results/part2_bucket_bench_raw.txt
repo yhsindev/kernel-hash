@@ -1,0 +1,137 @@
+# bucket_bench sweep  n=4096 m=4096 key_len=16 seed=305419896
+### mode=random hash=jhash2
+[13786.765051] HTB hash=jhash2 mode=0 n=4096 m=4096 key_len=16 Lmax=6 nonempty=2575 collisions=2038 expC=2047
+[13786.765070] HTB_hist load=0 buckets=1521
+[13786.765074] HTB_hist load=1 buckets=1471
+[13786.765078] HTB_hist load=2 buckets=768
+[13786.765081] HTB_hist load=3 buckets=271
+[13786.765083] HTB_hist load=4 buckets=52
+[13786.765086] HTB_hist load=5 buckets=10
+[13786.765089] HTB_hist load=6 buckets=3
+### mode=random hash=hsiphash
+[13786.797845] HTB hash=hsiphash mode=0 n=4096 m=4096 key_len=16 Lmax=6 nonempty=2627 collisions=1959 expC=2047
+[13786.797849] HTB_hist load=0 buckets=1469
+[13786.797849] HTB_hist load=1 buckets=1553
+[13786.797850] HTB_hist load=2 buckets=763
+[13786.797851] HTB_hist load=3 buckets=237
+[13786.797851] HTB_hist load=4 buckets=65
+[13786.797852] HTB_hist load=5 buckets=8
+[13786.797852] HTB_hist load=6 buckets=1
+### mode=random hash=siphash
+[13786.820873] HTB hash=siphash mode=0 n=4096 m=4096 key_len=16 Lmax=5 nonempty=2607 collisions=1986 expC=2047
+[13786.820877] HTB_hist load=0 buckets=1489
+[13786.820878] HTB_hist load=1 buckets=1524
+[13786.820878] HTB_hist load=2 buckets=759
+[13786.820879] HTB_hist load=3 buckets=251
+[13786.820879] HTB_hist load=4 buckets=64
+[13786.820880] HTB_hist load=5 buckets=9
+### mode=seq_ip hash=jhash2
+[13786.851702] HTB hash=jhash2 mode=1 n=4096 m=4096 key_len=16 Lmax=6 nonempty=2586 collisions=2065 expC=2047
+[13786.851708] HTB_hist load=0 buckets=1510
+[13786.851709] HTB_hist load=1 buckets=1502
+[13786.851709] HTB_hist load=2 buckets=759
+[13786.851710] HTB_hist load=3 buckets=247
+[13786.851711] HTB_hist load=4 buckets=60
+[13786.851711] HTB_hist load=5 buckets=13
+[13786.851712] HTB_hist load=6 buckets=5
+### mode=seq_ip hash=hsiphash
+[13786.886290] HTB hash=hsiphash mode=1 n=4096 m=4096 key_len=16 Lmax=6 nonempty=2566 collisions=2089 expC=2047
+[13786.886294] HTB_hist load=0 buckets=1530
+[13786.886295] HTB_hist load=1 buckets=1485
+[13786.886295] HTB_hist load=2 buckets=722
+[13786.886296] HTB_hist load=3 buckets=286
+[13786.886296] HTB_hist load=4 buckets=59
+[13786.886297] HTB_hist load=5 buckets=11
+[13786.886297] HTB_hist load=6 buckets=3
+### mode=seq_ip hash=siphash
+[13786.914367] HTB hash=siphash mode=1 n=4096 m=4096 key_len=16 Lmax=5 nonempty=2605 collisions=2025 expC=2047
+[13786.914373] HTB_hist load=0 buckets=1491
+[13786.914373] HTB_hist load=1 buckets=1534
+[13786.914374] HTB_hist load=2 buckets=747
+[13786.914375] HTB_hist load=3 buckets=246
+[13786.914375] HTB_hist load=4 buckets=60
+[13786.914376] HTB_hist load=5 buckets=18
+### mode=fixed_dst hash=jhash2
+[13786.944612] HTB hash=jhash2 mode=2 n=4096 m=4096 key_len=16 Lmax=7 nonempty=2621 collisions=1994 expC=2047
+[13786.944619] HTB_hist load=0 buckets=1475
+[13786.944620] HTB_hist load=1 buckets=1558
+[13786.944621] HTB_hist load=2 buckets=743
+[13786.944622] HTB_hist load=3 buckets=240
+[13786.944622] HTB_hist load=4 buckets=70
+[13786.944623] HTB_hist load=5 buckets=9
+[13786.944624] HTB_hist load=7 buckets=1
+### mode=fixed_dst hash=hsiphash
+[13786.990747] HTB hash=hsiphash mode=2 n=4096 m=4096 key_len=16 Lmax=5 nonempty=2574 collisions=2053 expC=2047
+[13786.990753] HTB_hist load=0 buckets=1522
+[13786.990754] HTB_hist load=1 buckets=1477
+[13786.990756] HTB_hist load=2 buckets=767
+[13786.990756] HTB_hist load=3 buckets=246
+[13786.990757] HTB_hist load=4 buckets=73
+[13786.990758] HTB_hist load=5 buckets=11
+### mode=fixed_dst hash=siphash
+[13787.025742] HTB hash=siphash mode=2 n=4096 m=4096 key_len=16 Lmax=8 nonempty=2608 collisions=2041 expC=2047
+[13787.025746] HTB_hist load=0 buckets=1488
+[13787.025747] HTB_hist load=1 buckets=1543
+[13787.025747] HTB_hist load=2 buckets=739
+[13787.025748] HTB_hist load=3 buckets=251
+[13787.025748] HTB_hist load=4 buckets=60
+[13787.025749] HTB_hist load=5 buckets=11
+[13787.025750] HTB_hist load=6 buckets=2
+[13787.025750] HTB_hist load=7 buckets=1
+[13787.025751] HTB_hist load=8 buckets=1
+### mode=vary_srcport hash=jhash2
+[13787.053274] HTB hash=jhash2 mode=3 n=4096 m=4096 key_len=16 Lmax=6 nonempty=2603 collisions=2002 expC=2047
+[13787.053286] HTB_hist load=0 buckets=1493
+[13787.053287] HTB_hist load=1 buckets=1523
+[13787.053288] HTB_hist load=2 buckets=747
+[13787.053288] HTB_hist load=3 buckets=267
+[13787.053289] HTB_hist load=4 buckets=54
+[13787.053290] HTB_hist load=5 buckets=10
+[13787.053290] HTB_hist load=6 buckets=2
+### mode=vary_srcport hash=hsiphash
+[13787.081802] HTB hash=hsiphash mode=3 n=4096 m=4096 key_len=16 Lmax=6 nonempty=2576 collisions=2111 expC=2047
+[13787.081813] HTB_hist load=0 buckets=1520
+[13787.081814] HTB_hist load=1 buckets=1505
+[13787.081815] HTB_hist load=2 buckets=737
+[13787.081816] HTB_hist load=3 buckets=244
+[13787.081816] HTB_hist load=4 buckets=67
+[13787.081817] HTB_hist load=5 buckets=21
+[13787.081817] HTB_hist load=6 buckets=2
+### mode=vary_srcport hash=siphash
+[13787.112107] HTB hash=siphash mode=3 n=4096 m=4096 key_len=16 Lmax=8 nonempty=2560 collisions=2167 expC=2047
+[13787.112111] HTB_hist load=0 buckets=1536
+[13787.112112] HTB_hist load=1 buckets=1486
+[13787.112113] HTB_hist load=2 buckets=737
+[13787.112113] HTB_hist load=3 buckets=242
+[13787.112114] HTB_hist load=4 buckets=75
+[13787.112114] HTB_hist load=5 buckets=13
+[13787.112115] HTB_hist load=6 buckets=5
+[13787.112116] HTB_hist load=7 buckets=1
+[13787.112116] HTB_hist load=8 buckets=1
+### mode=collision-vs-jhash hash=jhash2
+[13787.274223] hash_table_bench: collision-vs-jhash filled=4096/4096 tries=16579328 target=0
+[13787.274233] HTB hash=jhash2 mode=4 n=4096 m=4096 key_len=16 Lmax=4096 nonempty=1 collisions=8386560 expC=2047
+[13787.274236] HTB_hist load=0 buckets=4095
+[13787.274238] HTB_hist load=4096 buckets=1
+### mode=collision-vs-jhash hash=hsiphash
+[13787.485644] hash_table_bench: collision-vs-jhash filled=4096/4096 tries=16579328 target=0
+[13787.485661] HTB hash=hsiphash mode=4 n=4096 m=4096 key_len=16 Lmax=7 nonempty=2609 collisions=1994 expC=2047
+[13787.485663] HTB_hist load=0 buckets=1487
+[13787.485664] HTB_hist load=1 buckets=1524
+[13787.485664] HTB_hist load=2 buckets=768
+[13787.485665] HTB_hist load=3 buckets=247
+[13787.485666] HTB_hist load=4 buckets=59
+[13787.485666] HTB_hist load=5 buckets=8
+[13787.485667] HTB_hist load=6 buckets=2
+[13787.485667] HTB_hist load=7 buckets=1
+### mode=collision-vs-jhash hash=siphash
+[13787.647140] hash_table_bench: collision-vs-jhash filled=4096/4096 tries=16579328 target=0
+[13787.647163] HTB hash=siphash mode=4 n=4096 m=4096 key_len=16 Lmax=7 nonempty=2617 collisions=1985 expC=2047
+[13787.647166] HTB_hist load=0 buckets=1479
+[13787.647167] HTB_hist load=1 buckets=1541
+[13787.647167] HTB_hist load=2 buckets=757
+[13787.647168] HTB_hist load=3 buckets=249
+[13787.647168] HTB_hist load=4 buckets=60
+[13787.647169] HTB_hist load=5 buckets=7
+[13787.647169] HTB_hist load=6 buckets=2
+[13787.647170] HTB_hist load=7 buckets=1

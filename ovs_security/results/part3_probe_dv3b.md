@@ -1,6 +1,8 @@
-# Phase A：正常工作負載下的 probe-count 分布（jhash / hsiphash / siphash）
+# Part 3（OVS case study）：真實 flow table 的 probe-count baseline（jhash / hsiphash / siphash）
 
-非攻擊的結構化工作負載下，三種雜湊函式在 OVS flow table 的 `masked_flow_lookup` probe-count 分布對照。目的：確立「正常流量下雜湊函式選擇不影響 bucket 分布品質」，作為 Phase B（jhash-collision 攻擊）的對照基準。
+OVS case study 的良性 baseline。非攻擊的結構化工作負載下,三種雜湊函式在**真實 OVS flow table** 的 `masked_flow_lookup` probe-count 分布對照(經 `/sys/kernel/debug/ovs_probelen`)。目的:確立「正常流量下雜湊函式選擇不影響 bucket 分布品質」,作為 Part 3 攻擊情境(jhash-collision,TBD)的對照基準。
+
+> 命名note:本檔早期稱「Phase A」,已併入 Part 3(OVS case study)。
 
 ## 量測條件
 
@@ -43,5 +45,5 @@
 
 * 三者分布幾乎一致、都健康：平均 1.05–1.14 probes/lookup、max ≤ 8、無 overflow、無病態長 chain。
 * jhash 在此工作負載略緊（平均 1.05），但差距小、各為單次量測，不宜過度解讀。
-* 正常（非攻擊）流量下，雜湊函式選擇不影響 bucket 分布品質。安全差異不在此顯現，須由 Phase B 的刻意 collision flow set 檢驗。
+* 正常（非攻擊）流量下，雜湊函式選擇不影響 bucket 分布品質。安全差異不在此顯現，須由 Part 3 的刻意 collision flow set 檢驗。
 * 次要（弱）：相同 15s 下 siphash `total_lookups`（40.5M）< hsiphash / jhash（48.9 / 49.3M），方向與「siphash per-call 成本最高」一致；但 DEBUG 樁在跑、非乾淨 perf 量測，僅供參考。
