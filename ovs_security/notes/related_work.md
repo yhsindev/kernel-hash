@@ -101,6 +101,17 @@
 
 ---
 
+## 8. 攻擊方法分類(A/B/C)的文獻依據〔2026-06-16 verification pass,25/25 claims 通過〕
+
+我們把碰撞/HashDoS 構造法分成 **A 搜尋類(generic)/ B 結構利用類(structural)/ C 表-種子類** —— **此分組是本研究自行整理**:本輪查證確認**無單一 survey** 把它做成現成分類,但底層的 **generic(black-box / algorithm-independent)vs structural(cryptanalytic)** 區分有教科書依據,須如此陳述(不可歸給某篇現成 survey)。
+
+- **分組依據(generic vs structural)**〔verified〕:**Handbook of Applied Cryptography**(Menezes, van Oorschot & Vanstone, CRC Press 1996),Ch.9〈Hash Functions and Data Integrity〉—— §9.7.1 generic/algorithm-independent vs structural、§9.2 classification framework、Fact 9.33 birthday 界 `2^n / 2^(n/2)`;§9.7.3 把差分分析連到雜湊碰撞。
+- **A 類(generic)代表**〔verified〕:**van Oorschot & Wiener, "Parallel Collision Search with Cryptanalytic Applications," J. Cryptology 12(1):1–28, 1999**(DOI 10.1007/PL00003816)—— distinguished-points,~O(√n)、低記憶體,在任意 black-box 函式找碰撞。引為「高效、structure-free 地找大量 full-hash 碰撞」之法。
+- **B 類(structural)源頭**〔verified;頁碼已修正〕:**Biham & Shamir, "Differential Cryptanalysis of DES-like Cryptosystems"** —— CRYPTO'90(LNCS 537, Springer 1991, **pp.2–21**,DOI 10.1007/3-540-38424-3_1)及 **J. Cryptology 4(1):3–72, 1991**(DOI 10.1007/BF00630563)。differential = 輸入 XOR 差分如何傳播到輸出差(離散差,**非微分**);後由 ABB 2012 套到 ARX 雜湊。
+- **未驗證(本輪零通過 → 引用前自行確認,勿當已證)**:Mironov & Zhang, "Applications of SAT Solvers to Cryptanalysis of Hash Functions"(SAT 2006);Katz & Lindell, *Introduction to Modern Cryptography*。
+
+---
+
 ## 來源(verified primary)
 
 - Crosby & Wallach 2003 — usenix.org/legacy/events/sec03/tech/full_papers/crosby/crosby.pdf
@@ -114,3 +125,7 @@
 - balls-into-bins〔待查證〕— Raab-Steger(springer 3-540-49543-6_13);Mitzenmacher-Upfal(book);Gonnet(dl.acm 322248.322254)
 - Carter & Wegman, "Universal Classes of Hash Functions," STOC 1977 / JCSS 1979 — cs.princeton.edu/courses/archive/fall09/cos521/Handouts/universalclasses.pdf〔由 6/15 討論補入,須回查 primary〕
 - Csikor et al., "Tuple Space Explosion: A DoS Attack Against a Software Packet Classifier," CoNEXT 2019 — dl.acm.org/doi/10.1145/3359989.3365431〔OVS/TSS related work,由 6/15 討論補入〕
+- van Oorschot & Wiener, "Parallel Collision Search with Cryptanalytic Applications," J. Cryptology 12(1):1–28, 1999 — DOI 10.1007/PL00003816〔verified 6/16〕
+- Biham & Shamir, "Differential Cryptanalysis of DES-like Cryptosystems," CRYPTO'90(LNCS 537, pp.2–21)/ J. Cryptology 4(1):3–72, 1991 — DOI 10.1007/BF00630563〔verified 6/16〕
+- Handbook of Applied Cryptography (Menezes, van Oorschot & Vanstone, CRC 1996), Ch.9 §9.2/§9.7.1/Fact 9.33 — cacr.uwaterloo.ca/hac〔verified 6/16:generic-vs-structural 依據〕
+- Mironov & Zhang, "Applications of SAT Solvers to Cryptanalysis of Hash Functions," SAT 2006;Katz & Lindell, *Introduction to Modern Cryptography*〔未驗證,引用前自行確認〕

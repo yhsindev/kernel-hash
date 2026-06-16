@@ -1437,3 +1437,39 @@ Part 2(n=m=4096,α=1):
 * 讀文獻定稿 Part 1 數學(`L_max`、√-bound 已自行推對)。
 * Part 3 OVS case study:決定 (i) 讀 `hash_seed` 模擬 recovered-seed 攻擊,或 (ii) 良性 snapshot + 註明;以 `ovs_probelen`/`ovs_buckets` 量。
 * 範圍先限 `flow_hash` 替換,不重構 `find_bucket`。
+
+---
+
+## 2026-06-16 — Check-in：entropy budget + Part 3 attack 走法定案
+
+### 今日目標
+
+把 Part 1 → Part 3 的橋接釐清:分析「攻擊者在 OVS flow key 空間的 entropy budget」(可控位元 B → 能否湊出 K 個 distinct collision key),並據此**拍板 Part 3 在真實 OVS 表上的 targeted-bucket 攻擊走法**(讀 `hash_seed` 模擬 recovered-seed vs 良性 snapshot)。Part 1 數學若文獻讀畢則順手定稿。
+
+### 今日操作（預定）
+
+1. **entropy budget**:界定 OVS megaflow masked key 中攻擊者可控欄位與位元數 B;以 `2^B`(可造的相異 key 上界)、`2^B/m`(每 bucket 候選)評估能否湊到目標 chain 長 K。
+2. **Part 3 attack 走法定案**:在 `hash_seed`(隨機 32-bit)前提下,選 (i) 用 instrumentation 讀 `ti->hash_seed` 模擬「已回復 seed」的攻擊者 → targeted-bucket 注入真實 OVS 表,或 (ii) 良性 snapshot + 註明 full-hash-collision 可繞過 seed。
+3. 視時間:對齊 `notes/formal_model.md` 與我自己寫的數學 draft(擇一為正本)。
+
+### 今日不做
+
+- 不做 lookup3 differential(維持 targeted-bucket;承認其存在即可)。
+- 不重構 `find_bucket`;範圍限 `flow_hash` 替換。
+
+### 成功標準
+
+- entropy budget 有明確的 B 與 `2^B`/`2^B/m` 上界陳述。
+- Part 3 攻擊走法拍板,且與 `hash_seed` 兩層結構一致。
+
+### 進行中筆記（6/16，handoff）
+
+今日已定/已做(尚未 check-out):
+
+* **Part 3 攻擊走法改定為 (iii) 暴力 full-hash collision**:離線搜 K 個同 jhash2(32-bit)值的 key → `jhash_1word(同值, seed)` 必相同 → **同 bucket、與隨機 hash_seed 無關**;成本 `K·2^32`(modest K~數十,數小時離線可行)。**不需 differential、不需讀 seed**。(i) 讀 seed 模擬、(ii) 良性 snapshot 為備案。
+* **differential 降為可選 future-work**:lookup3 avalanche 好、確定性差分難;且 (iii) 已涵蓋 seed-bypass,故非必要。承認其存在即可(related_work §2/§8)。
+* **文獻查證完成**(related_work §8):A/B 分組錨定 **HAC Ch.9 §9.7.1**(generic vs structural)+ Fact 9.33;vOW(J.Cryptology 12(1):1–28,1999)、Biham-Shamir(J.Cryptology 4(1):**3–72**,1991,頁碼已修)verified;Mironov-Zhang(SAT)、Katz-Lindell 未驗證;**A/B/C 分法無單一 survey → 報告寫成自行整理、錨定 HAC**。
+
+下一個討論點(未做):demo 的 **K 要多大**才明顯(良性 OVS max chain ~7),以及 **entropy budget**(OVS flow key 可控位元 B → `2^B`)能否支撐暴搜出 K 個相異 collision key。
+
+入口/狀態:`ovs_security/README.md`(文件地圖、3 Part);Part 1 數學 `notes/formal_model.md`;文獻 `notes/related_work.md`;Part 2 完成 `results/part2_bucket_bench.md`;Part 3 樁 `ovs_probelen`+`ovs_buckets`(patch),OVS baseline `results/part3_probe_dv3b.md`。模組 backend 目前 jhash(srcversion 變動,用 `nm -u` 認)。
