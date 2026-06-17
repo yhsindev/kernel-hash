@@ -31,3 +31,7 @@ ovs_datapath_bench/results/else/
 ovs_datapath_bench/results/**/dpctl_dump_flows*.txt
 ovs_datapath_bench/results/**/ofctl_dump_flows*.txt
 ovs_datapath_bench/results/**/perf_report_*.txt
+
+# OVS attack tool: compiled binary + per-run collision key dump (regenerable)
+ovs_security/attack/find_jhash_collision
+ovs_security/attack/keys.txt
