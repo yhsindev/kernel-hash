@@ -1,0 +1,11 @@
+# ovs flow-table bucket-load snapshot
+# n_buckets 16384 total_flows 15443 Lmax 7 nonempty 10004 collisions 7209
+# chain_len buckets
+0 6380
+1 5971
+2 2924
+3 867
+4 196
+5 40
+6 3
+7 3

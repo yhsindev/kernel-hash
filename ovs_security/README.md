@@ -11,10 +11,12 @@
 | — | **總覽 / 計畫**(本檔):定位、RQ、結構、指標、進度 | `README.md` | — |
 | **Part 1** | 形式化**數學模型**(攻擊模型 + balls-into-bins + PRF 防禦) | `notes/formal_model.md` | 初稿,數學待你查證定稿 |
 | 〃 支撐 | **文獻基礎**(cited,信心分級) | `notes/related_work.md` | 完成 |
+| 〃 支撐 | **攻擊成本分析**(離線構造牆鐘 + 成本不對稱,實測錨點) | `notes/attack_cost.md` | 完成 |
 | **Part 2** | **通用 hash-table 實驗(主實驗)**:harness + run/parse | `bucket_bench/` | 完成 |
 | 〃 結果 | Part 2 五組 flow set × 三雜湊的分布 | `results/part2_bucket_bench.md` | 完成 |
 | **Part 3** | **OVS case study**:在真實 flow table 驗證 | kernel 樁 `patches/flow_table_debug_instrumentation.diff`(`ovs_probelen` + `ovs_buckets`) | 樁完成 |
-| 〃 結果 | Part 3 OVS 真實表 probe-count baseline | `results/part3_probe_dv3b.md` | baseline 完成,攻擊情境 TBD |
+| 〃 結果 | Part 3 OVS 真實表 probe-count baseline(動態) | `results/part3_probe_dv3b.md` | baseline 完成 |
+| 〃 結果 | Part 3 OVS 真實表 bucket-load snapshot(靜態) | `results/part3_buckets_dv3b.md` | baseline 完成(三 backend);攻擊情境 TBD |
 
 **三個 Part 一句話**:Part 1 = 數學;Part 2 = 不碰 OVS 的通用主實驗;Part 3 = 拿 OVS 驗證。對應 **RQ1/2/3**(見下,RQ1 通用良性、RQ2 通用攻擊、RQ3 OVS 特例)。
 (命名note:早期曾用「Phase A/B」,已全部併入 Part 1/2/3。)
