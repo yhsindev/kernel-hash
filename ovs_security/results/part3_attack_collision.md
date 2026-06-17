@@ -10,7 +10,7 @@
 
 ## 狀態
 
-**構造端完成、量測端待執行**。離線 jhash2 模型已對 64 筆真實資料驗證;工具鏈三件套已就緒並端到端跑通(K=8 demo)。尚未植入真實表、尚未取 bucket-load 量測。
+**攻擊已在真實表重現(靜態 + 動態證據完成)**。離線 jhash2 模型對 64 筆真實資料驗證 64/64;K=16 碰撞集植入真實 OVS datapath:16 條 flow 的 in-kernel `flow_hash` 全 = `0xcaa92980`(同 hash);`ovs_buckets` 取得 `Lmax=16`、單一桶 chain=16、`collisions=120`=C(16,2);`ovs_probelen` probe 數延伸到 16(baseline ≤7)。三重佐證一致。
 
 ## 方法與工具鏈
 
@@ -31,6 +31,30 @@
 
 端到端 demo(K=8,真實模板):`verify=OK`,獨立以離線 jhash2 複核 8 個 key 全 = 共同 target;`keys_to_rules.py` 驗證閘正向通過、且竄改固定 word 時正確中止。
 
+## 在真實表的攻擊結果（K=16）
+
+工作負載:K=16 碰撞集(對攻擊規則自身佈局的模板 `attack4_template.txt` 搜出,target `0xcaa92980`),裝成 16 條 `priority=100,ip,nw_proto=17,nw_src,nw_dst,actions=output:2` 規則(不含 NORMAL),`pktgen_pairs.sh` 逐對灌入。
+
+* **同 hash(直接證據)**:植入後抓 keydump,16 條 flow 的 in-kernel `flow_hash` **全部 = `0xcaa92980`**(`grep hash | uniq -c` → `16 hash=0xcaa92980`)。因 `bucket = jhash_1word(0xcaa92980, seed) & (m−1)` 對任意 seed 同值,16 條必落同一桶。此為 §5a seed-independent 走法的真實表實證。
+* **靜態(`ovs_buckets`)**:`# n_buckets 1024 total_flows 17 Lmax 16 nonempty 2 collisions 120`,chain-length 直方圖 = `{0:1022, 1:1, 16:1}` —— **單一桶 chain 長度 = 16**,其餘 ≤1。`collisions=120`=C(16,2) 精確對應 16 條同桶;`H_norm≈0.032`(良性 baseline ~0.94)= 極度集中。對照:17 條若隨機散佈,期望 Lmax ≈ 1–2。(`results/part3_buckets_attack_jhash.txt`)
+* **動態(`ovs_probelen`,probe 退化)**:直方圖延伸到 **16**(overflow 0),16 對平均送 → probe 數在 1..16 大致均勻、上限 = K = 16。對照良性 D-v3B baseline(probe max ~7、集中 0–2,見 `part3_probe_dv3b.md`):**單桶 chain 把該桶查找從 O(1) 推到 O(K)**。
+
+結論:離線構造的完整 jhash 碰撞,在真實 OVS kernel datapath 重現為單桶長 chain,靜態(同 hash)與動態(probe 走滿 chain)雙重佐證,且不受隨機 `hash_seed` 影響。
+
+## 量測踩到的坑（操作教訓,供重跑參考）
+
+1. **OF in_port ≠ datapath in_port**:規則寫 `in_port=<dp 埠號>` 比對不到(OF 埠號不同)→ 封包落 NORMAL flood。改為規則不 match in_port(OVS 仍會在 megaflow 自動 pin in_port,masked-key 佈局不變)。`keys_to_rules.py --in-port` 預設 -1(不寫)。
+2. **NORMAL 觸發 MAC learning → eth.src 時而被 unwildcard**(`w11/w12` 在 match/wildcard 間飄),模板不穩。移除 NORMAL → MAC 恆 wildcard=0,模板固定。
+3. **手動 `ovs-dpctl del-flows` 會破壞 dpif 同步**(revalidator `failed to put[modify]/flow_del (No such file or directory)`),之後 upcall 一條 flow 都裝不進去 → 需 `systemctl restart ovs-vswitchd`。改用 idle 逐出清 flow,勿手動刪 datapath。
+4. **`restart ovs-vswitchd` 後 `ovs_dbg_tbl` 掉成 NULL** → `ovs_buckets` 顯示 "no flow table registered";需重建 datapath(reload 模組)重設。`ovs_probelen` 不受影響。
+5. 驗證 flow 是否真的裝上,用 keydump 記錄數(插入當下記),勿只看事後 `dump-flows`(會被 idle 逐出誤導)。
+
+## 待執行（下一步）
+
+1. **scaling**:K=16/32/64/128 各量,看 jhash 下 Lmax / probe-max 隨 K 線性成長(K=16 已得 Lmax=16)。
+2. **掃雜湊函式**:同流程在 hsiphash / siphash build 重跑 → 預期回 baseline(keyed 雜湊重新散開)。「jhash 線性 vs keyed 平坦」即「換 keyed 雜湊可擋」的實證。
+3. 提醒:reload 後須以 keydump `uniq -c` 確認碰撞仍成立(dp in_port 等佈局未變),再信 `ovs_buckets` 數字;本次 K=16 reload 後仍 16×`0xcaa92980`,佈局穩定。
+
 ## 待執行的量測協定
 
 1. 搜碰撞(K=64 起,scaling 取 16/32/64/128)→ `keys_to_rules.py` 轉規則/配對。
@@ -46,4 +70,4 @@
 - 模板綁定 D-v3B ruleset/testbed;不同 ruleset 的 range/佈局須重萃。
 - 搜出的 IP 為任意值,需裝對應 exact-match 規則才可達;量測前以第 3 步實測把關。
 - 成本模型 `K·2³²` 為固定目標暴搜;牆鐘與成本不對稱見 `notes/attack_cost.md`。
-- 構造端完成不等於攻擊已驗證;bucket-load 效果須待植入量測(本篇狀態)。
+- 攻擊已在 K=16 真實表重現(同 hash + probe 走滿 chain);靜態 `ovs_buckets` Lmax 圖、scaling、keyed 雜湊對照尚待補(見「待執行」)。
