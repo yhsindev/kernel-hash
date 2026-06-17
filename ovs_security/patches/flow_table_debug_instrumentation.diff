@@ -1,5 +1,4 @@
 diff --git a/net/openvswitch/flow_table.c b/net/openvswitch/flow_table.c
-index 898b7b8..2552ae5 100644
 --- a/net/openvswitch/flow_table.c
 +++ b/net/openvswitch/flow_table.c
 @@ -14,6 +14,7 @@
@@ -22,7 +21,7 @@ index 898b7b8..2552ae5 100644
  static u16 range_n_bytes(const struct sw_flow_key_range *range)
  {
  	return range->end - range->start;
-@@ -437,6 +443,7 @@ int ovs_flow_tbl_init(struct flow_table *table)
+@@ -437,6 +443,7 @@
  	table->last_rehash = jiffies;
  	table->count = 0;
  	table->ufid_count = 0;
@@ -30,7 +29,7 @@ index 898b7b8..2552ae5 100644
  	return 0;
  
  free_ti:
-@@ -517,6 +524,9 @@ void ovs_flow_tbl_destroy(struct flow_table *table)
+@@ -517,6 +524,9 @@
  	struct mask_cache *mc = rcu_dereference_raw(table->mask_cache);
  	struct mask_array *ma = rcu_dereference_raw(table->mask_array);
  
@@ -40,7 +39,7 @@ index 898b7b8..2552ae5 100644
  	call_rcu(&mc->rcu, mask_cache_rcu_cb);
  	call_rcu(&ma->rcu, mask_array_rcu_cb);
  	table_instance_destroy(ti, ufid_ti);
-@@ -646,25 +656,299 @@ int ovs_flow_tbl_flush(struct flow_table *flow_table)
+@@ -646,25 +656,390 @@
  #define OVS_FLOW_HASH_HSIPHASH  0
  #define OVS_FLOW_HASH_SIPHASH   0
  
@@ -51,17 +50,26 @@ index 898b7b8..2552ae5 100644
 + * 量測 cycle 前務必設回 0(這段每包都會跑,atomic inc 會污染 perf)。 */
 +#define OVS_FLOW_HASH_DEBUG_LEN  1
 +
-+static const hsiphash_key_t ovs_flow_hsiphash_key = {
-+	.key = { 0x0706050403020100UL, 0x0f0e0d0c0b0a0908UL },
-+};
-+
-+static const siphash_key_t ovs_flow_siphash_key = {
-+	.key = { 0x0706050403020100ULL, 0x0f0e0d0c0b0a0908ULL },
-+};
++/* keyed-hash 金鑰:per-boot 隨機(ovs_flow_init 以 get_random_bytes 填),比照 OVS
++ * 真實 ti->hash_seed 的做法。固定值會讓安全論述失真;隨機值也實證「金鑰 const-ness
++ * 不影響 per-hash cycle」(SipHash 為 constant-time,且雜湊走 out-of-line __*siphash)。 */
++static hsiphash_key_t ovs_flow_hsiphash_key;
++static siphash_key_t ovs_flow_siphash_key;
 +
 +#if OVS_FLOW_HASH_DEBUG_LEN
 +#include <linux/debugfs.h>
 +#include <linux/seq_file.h>
++
++/* 序列化 TSC 讀取(LFENCE+RDTSC),供 flow_hash 的 in-context cycle 量測。
++ * 非 x86 退化為 0(量測停用),量測平台為 x86-64。 */
++#ifdef CONFIG_X86
++#include <asm/msr.h>
++static inline u64 ovs_rdtsc(void) { return rdtsc_ordered(); }
++#define OVS_HASHCYC_X86 1
++#else
++static inline u64 ovs_rdtsc(void) { return 0; }
++#define OVS_HASHCYC_X86 0
++#endif
 +
 +/* masked-key length(range_n_bytes)直方圖:file-scope state,供 debugfs 讀取/歸零。
 + * hash_len 0..OVS_HASHLEN_MAX-1 各一格,超出者計入 ovs_hash_over(避免靜默漏計);
@@ -74,18 +82,21 @@ index 898b7b8..2552ae5 100644
 +static struct dentry *ovs_hashlen_dentry;
 +
 +static int ovs_hashlen_show(struct seq_file *m, void *v)
-+{
+ {
+-	const u32 *hash_key = (const u32 *)((const u8 *)key + range->start);
 +	s64 total = atomic64_read(&ovs_hash_calls);
 +	s64 over = atomic64_read(&ovs_hash_over);
 +	int i;
-+
+ 
+-	/* Make sure number of hash bytes are multiple of u32. */
+-	int hash_u32s = range_n_bytes(range) >> 2;
 +	seq_puts(m, "# ovs_flow_hash_backend masked-key length histogram\n");
 +	seq_printf(m, "# total_calls %lld\n", total);
 +	seq_printf(m, "# overflow(>=%d) %lld\n", OVS_HASHLEN_MAX, over);
 +	seq_puts(m, "# hash_len count\n");
 +	for (i = 0; i < OVS_HASHLEN_MAX; i++) {
 +		s64 c = atomic64_read(&ovs_hash_hist[i]);
-+
+ 
 +		if (c)
 +			seq_printf(m, "%d %lld\n", i, c);
 +	}
@@ -164,19 +175,16 @@ index 898b7b8..2552ae5 100644
 +
 +static ssize_t ovs_probelen_write(struct file *file, const char __user *buf,
 +				  size_t count, loff_t *ppos)
- {
--	const u32 *hash_key = (const u32 *)((const u8 *)key + range->start);
++{
 +	int i;
- 
--	/* Make sure number of hash bytes are multiple of u32. */
--	int hash_u32s = range_n_bytes(range) >> 2;
++
 +	for (i = 0; i < OVS_PROBELEN_MAX; i++)
 +		atomic64_set(&ovs_probe_hist[i], 0);
 +	atomic64_set(&ovs_probe_over, 0);
 +	atomic64_set(&ovs_probe_calls, 0);
 +	return count;
 +}
- 
++
 +static const struct file_operations ovs_probelen_fops = {
 +	.owner   = THIS_MODULE,
 +	.open    = ovs_probelen_open,
@@ -184,6 +192,88 @@ index 898b7b8..2552ae5 100644
 +	.llseek  = seq_lseek,
 +	.release = single_release,
 +	.write   = ovs_probelen_write,
++};
++
++/* 實驗三:flow_hash() 的 in-context per-hash cycle 直方圖。在 masked_flow_lookup() 的
++ * flow_hash 呼叫處用 rdtsc_ordered() 序列化夾量;atomic64 共享直方圖(同 ovs_probelen),
++ * 其 increment 落在量測窗(t0..t1)之外,故 cache-bounce 不污染 delta。讀出經 debugfs,讀時順帶
++ * 跑空 rdtsc 對、印 overhead min 供扣除(flow_hash ≈ mode - overhead_min)。
++ * 量測前請鎖頻(performance governor + 關 turbo);invariant TSC 在固定頻率下 cycle 才
++ * 與 core clock 對應、三 backend 才可比。報 mode/min 而非 mean(IRQ outlier 進長尾)。 */
++#define OVS_HASHCYC_MAX 1024
++static atomic64_t ovs_hashcyc_hist[OVS_HASHCYC_MAX];
++static atomic64_t ovs_hashcyc_over;
++static atomic64_t ovs_hashcyc_calls;
++static struct dentry *ovs_hashcyc_dentry;
++
++static void ovs_record_hashcyc(u64 cyc)
++{
++	if (cyc < OVS_HASHCYC_MAX)
++		atomic64_inc(&ovs_hashcyc_hist[cyc]);
++	else
++		atomic64_inc(&ovs_hashcyc_over);
++	atomic64_inc(&ovs_hashcyc_calls);
++}
++
++static int ovs_hashcyc_show(struct seq_file *m, void *v)
++{
++	s64 total = atomic64_read(&ovs_hashcyc_calls);
++	s64 over = atomic64_read(&ovs_hashcyc_over);
++	u64 mn = ~0ULL;
++	unsigned long flags;
++	int i, k;
++
++	/* 讀時校正:空 rdtsc_ordered 對的 overhead,取 min(無中斷者);關 IRQ 避免 outlier。 */
++	local_irq_save(flags);
++	for (k = 0; k < 4096; k++) {
++		u64 a = ovs_rdtsc();
++		u64 b = ovs_rdtsc();
++
++		if (b - a < mn)
++			mn = b - a;
++	}
++	local_irq_restore(flags);
++
++	seq_printf(m, "# flow_hash in-context cycle histogram (x86=%d)\n",
++		   OVS_HASHCYC_X86);
++	seq_printf(m, "# total_calls %lld overflow(>=%d) %lld\n",
++		   total, OVS_HASHCYC_MAX, over);
++	seq_printf(m, "# rdtsc_pair_overhead_min %llu (flow_hash ~= mode - this)\n",
++		   mn);
++	seq_puts(m, "# cycles count\n");
++	for (i = 0; i < OVS_HASHCYC_MAX; i++) {
++		s64 c = atomic64_read(&ovs_hashcyc_hist[i]);
++
++		if (c)
++			seq_printf(m, "%d %lld\n", i, c);
++	}
++	return 0;
++}
++
++static int ovs_hashcyc_open(struct inode *inode, struct file *file)
++{
++	return single_open(file, ovs_hashcyc_show, NULL);
++}
++
++static ssize_t ovs_hashcyc_write(struct file *file, const char __user *buf,
++				 size_t count, loff_t *ppos)
++{
++	int i;
++
++	for (i = 0; i < OVS_HASHCYC_MAX; i++)
++		atomic64_set(&ovs_hashcyc_hist[i], 0);
++	atomic64_set(&ovs_hashcyc_over, 0);
++	atomic64_set(&ovs_hashcyc_calls, 0);
++	return count;
++}
++
++static const struct file_operations ovs_hashcyc_fops = {
++	.owner   = THIS_MODULE,
++	.open    = ovs_hashcyc_open,
++	.read    = seq_read,
++	.llseek  = seq_lseek,
++	.release = single_release,
++	.write   = ovs_hashcyc_write,
 +};
 +
 +/* 實驗三 Part 3:OVS flow table 的 bucket-load snapshot。
@@ -348,7 +438,7 @@ index 898b7b8..2552ae5 100644
  static int flow_key_start(const struct sw_flow_key *key)
  {
  	if (key->tun_proto)
-@@ -716,6 +1000,9 @@ static struct sw_flow *masked_flow_lookup(struct table_instance *ti,
+@@ -716,18 +1091,40 @@
  	struct hlist_head *head;
  	u32 hash;
  	struct sw_flow_key masked_key;
@@ -357,8 +447,18 @@ index 898b7b8..2552ae5 100644
 +#endif
  
  	ovs_flow_mask_key(&masked_key, unmasked, false, mask);
++#if OVS_FLOW_HASH_DEBUG_LEN
++	{
++		u64 _c0 = ovs_rdtsc();
++
++		hash = flow_hash(&masked_key, &mask->range);
++		ovs_record_hashcyc(ovs_rdtsc() - _c0);
++	}
++#else
  	hash = flow_hash(&masked_key, &mask->range);
-@@ -724,10 +1011,20 @@ static struct sw_flow *masked_flow_lookup(struct table_instance *ti,
++#endif
+ 	head = find_bucket(ti, hash);
+ 	(*n_mask_hit)++;
  
  	hlist_for_each_entry_rcu(flow, head, flow_table.node[ti->node_ver],
  				 lockdep_ovsl_is_held()) {
@@ -380,7 +480,7 @@ index 898b7b8..2552ae5 100644
  	return NULL;
  }
  
-@@ -1050,6 +1347,24 @@ static void flow_key_insert(struct flow_table *table, struct sw_flow *flow)
+@@ -1050,6 +1447,24 @@
  	struct table_instance *ti;
  
  	flow->flow_table.hash = flow_hash(&flow->key, &flow->mask->range);
@@ -405,7 +505,18 @@ index 898b7b8..2552ae5 100644
  	ti = ovsl_dereference(table->ti);
  	table_instance_insert(ti, flow);
  	table->count++;
-@@ -1221,12 +1531,49 @@ int ovs_flow_init(void)
+@@ -1204,6 +1619,10 @@
+ 	BUILD_BUG_ON(__alignof__(struct sw_flow_key) % __alignof__(long));
+ 	BUILD_BUG_ON(sizeof(struct sw_flow_key) % sizeof(long));
+ 
++	/* per-boot 隨機 keyed-hash 金鑰(hsiphash/siphash backend 用),比照 ti->hash_seed。 */
++	get_random_bytes(&ovs_flow_hsiphash_key, sizeof(ovs_flow_hsiphash_key));
++	get_random_bytes(&ovs_flow_siphash_key, sizeof(ovs_flow_siphash_key));
++
+ 	flow_cache = kmem_cache_create("sw_flow", sizeof(struct sw_flow)
+ 				       + (nr_cpu_ids
+ 					  * sizeof(struct sw_flow_stats *))
+@@ -1221,12 +1640,54 @@
  		return -ENOMEM;
  	}
  
@@ -426,6 +537,10 @@ index 898b7b8..2552ae5 100644
 +	/* /sys/kernel/debug/ovs_keydump:flow 插入時 dump masked-key bytes(Part 3 攻擊 A)。 */
 +	ovs_keydump_dentry = debugfs_create_file("ovs_keydump", 0644, NULL,
 +						 NULL, &ovs_keydump_fops);
++
++	/* /sys/kernel/debug/ovs_hashcycles:flow_hash 的 in-context per-hash cycle 直方圖。 */
++	ovs_hashcyc_dentry = debugfs_create_file("ovs_hashcycles", 0644, NULL,
++						 NULL, &ovs_hashcyc_fops);
 +
 +	/* 一次性印出 sw_flow_key 各區段 offset,供把 hash_len 對回欄位:
 +	 * masked-key range = [rounddown(phy,8), roundup(欄位尾,8)),長度=range_n_bytes。 */
@@ -451,6 +566,7 @@ index 898b7b8..2552ae5 100644
 +	debugfs_remove(ovs_probelen_dentry);
 +	debugfs_remove(ovs_buckets_dentry);
 +	debugfs_remove(ovs_keydump_dentry);
++	debugfs_remove(ovs_hashcyc_dentry);
 +#endif
  	kmem_cache_destroy(flow_stats_cache);
  	kmem_cache_destroy(flow_cache);

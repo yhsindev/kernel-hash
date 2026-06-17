@@ -1,6 +1,5 @@
 # ovs flow-table bucket-load snapshot
-# n_buckets 1024 total_flows 17 Lmax 16 nonempty 2 collisions 120
+# n_buckets 1024 total_flows 16 Lmax 16 nonempty 1 collisions 120
 # chain_len buckets
-0 1022
-1 1
+0 1023
 16 1

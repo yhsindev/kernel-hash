@@ -1,0 +1,6 @@
+# masked_flow_lookup probe-count histogram
+# total_lookups 35205
+# overflow(>=1024) 0
+# probes count
+0 6368
+1 28837
