@@ -1,5 +1,5 @@
 diff --git a/net/openvswitch/flow_table.c b/net/openvswitch/flow_table.c
-index 898b7b8..633dd7c 100644
+index 898b7b8..2552ae5 100644
 --- a/net/openvswitch/flow_table.c
 +++ b/net/openvswitch/flow_table.c
 @@ -14,6 +14,7 @@
@@ -40,7 +40,7 @@ index 898b7b8..633dd7c 100644
  	call_rcu(&mc->rcu, mask_cache_rcu_cb);
  	call_rcu(&ma->rcu, mask_array_rcu_cb);
  	table_instance_destroy(ti, ufid_ti);
-@@ -646,25 +656,258 @@ int ovs_flow_tbl_flush(struct flow_table *flow_table)
+@@ -646,25 +656,299 @@ int ovs_flow_tbl_flush(struct flow_table *flow_table)
  #define OVS_FLOW_HASH_HSIPHASH  0
  #define OVS_FLOW_HASH_SIPHASH   0
  
@@ -164,16 +164,19 @@ index 898b7b8..633dd7c 100644
 +
 +static ssize_t ovs_probelen_write(struct file *file, const char __user *buf,
 +				  size_t count, loff_t *ppos)
-+{
+ {
+-	const u32 *hash_key = (const u32 *)((const u8 *)key + range->start);
 +	int i;
-+
+ 
+-	/* Make sure number of hash bytes are multiple of u32. */
+-	int hash_u32s = range_n_bytes(range) >> 2;
 +	for (i = 0; i < OVS_PROBELEN_MAX; i++)
 +		atomic64_set(&ovs_probe_hist[i], 0);
 +	atomic64_set(&ovs_probe_over, 0);
 +	atomic64_set(&ovs_probe_calls, 0);
 +	return count;
 +}
-+
+ 
 +static const struct file_operations ovs_probelen_fops = {
 +	.owner   = THIS_MODULE,
 +	.open    = ovs_probelen_open,
@@ -193,17 +196,14 @@ index 898b7b8..633dd7c 100644
 +static struct dentry *ovs_buckets_dentry;
 +
 +static int ovs_buckets_show(struct seq_file *m, void *v)
- {
--	const u32 *hash_key = (const u32 *)((const u8 *)key + range->start);
++{
 +	struct flow_table *tbl = READ_ONCE(ovs_dbg_tbl);
 +	struct table_instance *ti;
 +	u64 *hist;	/* [0..127] + overflow 於 [128];heap 配置避免大 stack frame */
 +	u64 collisions = 0, total = 0;
 +	u32 nb = 0, Lmax = 0, nonempty = 0;
 +	int i;
- 
--	/* Make sure number of hash bytes are multiple of u32. */
--	int hash_u32s = range_n_bytes(range) >> 2;
++
 +	if (!tbl) {
 +		seq_puts(m, "# no flow table registered\n");
 +		return 0;
@@ -211,7 +211,7 @@ index 898b7b8..633dd7c 100644
 +	hist = kcalloc(OVS_BUCKETHIST_MAX + 1, sizeof(*hist), GFP_KERNEL);
 +	if (!hist)
 +		return -ENOMEM;
- 
++
 +	rcu_read_lock();
 +	ti = rcu_dereference(tbl->ti);
 +	if (ti) {
@@ -262,6 +262,47 @@ index 898b7b8..633dd7c 100644
 +	.llseek  = seq_lseek,
 +	.release = single_release,
 +};
++
++/* /sys/kernel/debug/ovs_keydump:寫 1 開、0 關。開啟時,每次 flow 插入會把 flow_hash
++ * 實際雜湊的那段 masked-key byte(range.start 起、range_n_bytes 長)、range.start、
++ * 長度、核心算出的 flow_hash 印到 dmesg。供 Part 3 攻擊 (A) 對出 masked-key 精確佈局,
++ * 並驗證 user-space jhash2 與核心逐位元一致。預設關,不影響 baseline 量測。 */
++/* 寫 1:開啟並重置剩餘額度為 OVS_KEYDUMP_CAP(只 dump 前這麼多筆插入,避免 pktgen
++ * 灌爆 dmesg);寫 0:關閉。額度用完自動停,再寫 1 可重新計數。 */
++#define OVS_KEYDUMP_CAP 64
++static int ovs_keydump_remaining;	/* flow_key_insert 持 OVS mutex,無併發 */
++static struct dentry *ovs_keydump_dentry;
++
++static ssize_t ovs_keydump_write(struct file *file, const char __user *buf,
++				 size_t count, loff_t *ppos)
++{
++	char c = 0;
++
++	if (count && copy_from_user(&c, buf, 1))
++		return -EFAULT;
++	WRITE_ONCE(ovs_keydump_remaining, c == '1' ? OVS_KEYDUMP_CAP : 0);
++	return count;
++}
++
++static int ovs_keydump_show(struct seq_file *m, void *v)
++{
++	seq_printf(m, "remaining %d\n", READ_ONCE(ovs_keydump_remaining));
++	return 0;
++}
++
++static int ovs_keydump_open(struct inode *inode, struct file *file)
++{
++	return single_open(file, ovs_keydump_show, NULL);
++}
++
++static const struct file_operations ovs_keydump_fops = {
++	.owner   = THIS_MODULE,
++	.open    = ovs_keydump_open,
++	.read    = seq_read,
++	.llseek  = seq_lseek,
++	.release = single_release,
++	.write   = ovs_keydump_write,
++};
 +#endif /* OVS_FLOW_HASH_DEBUG_LEN */
 +
 +/* Keep this wrapper out-of-line so perf can attribute backend hash cost. */
@@ -307,7 +348,7 @@ index 898b7b8..633dd7c 100644
  static int flow_key_start(const struct sw_flow_key *key)
  {
  	if (key->tun_proto)
-@@ -716,6 +959,9 @@ static struct sw_flow *masked_flow_lookup(struct table_instance *ti,
+@@ -716,6 +1000,9 @@ static struct sw_flow *masked_flow_lookup(struct table_instance *ti,
  	struct hlist_head *head;
  	u32 hash;
  	struct sw_flow_key masked_key;
@@ -317,7 +358,7 @@ index 898b7b8..633dd7c 100644
  
  	ovs_flow_mask_key(&masked_key, unmasked, false, mask);
  	hash = flow_hash(&masked_key, &mask->range);
-@@ -724,10 +970,20 @@ static struct sw_flow *masked_flow_lookup(struct table_instance *ti,
+@@ -724,10 +1011,20 @@ static struct sw_flow *masked_flow_lookup(struct table_instance *ti,
  
  	hlist_for_each_entry_rcu(flow, head, flow_table.node[ti->node_ver],
  				 lockdep_ovsl_is_held()) {
@@ -339,7 +380,32 @@ index 898b7b8..633dd7c 100644
  	return NULL;
  }
  
-@@ -1221,12 +1477,44 @@ int ovs_flow_init(void)
+@@ -1050,6 +1347,24 @@ static void flow_key_insert(struct flow_table *table, struct sw_flow *flow)
+ 	struct table_instance *ti;
+ 
+ 	flow->flow_table.hash = flow_hash(&flow->key, &flow->mask->range);
++#if OVS_FLOW_HASH_DEBUG_LEN
++	if (READ_ONCE(ovs_keydump_remaining) > 0) {
++		const u8 *mk = (const u8 *)&flow->key + flow->mask->range.start;
++		const u8 *mm = (const u8 *)&flow->mask->key + flow->mask->range.start;
++		u16 mklen = range_n_bytes(&flow->mask->range);
++
++		WRITE_ONCE(ovs_keydump_remaining,
++			   READ_ONCE(ovs_keydump_remaining) - 1);
++		pr_info("ovs_keydump: start=%u len=%u hash=0x%08x\n",
++			flow->mask->range.start, mklen, flow->flow_table.hash);
++		print_hex_dump(KERN_INFO, "ovs_keydump: ", DUMP_PREFIX_OFFSET,
++			       16, 1, mk, mklen, false);
++		/* mask byte 0xff = 該位元組參與比對, 0x00 = wildcard;
++		 * 用於區分 masked-key 的 00 是真值還是被 wildcard。 */
++		print_hex_dump(KERN_INFO, "ovs_keymask: ", DUMP_PREFIX_OFFSET,
++			       16, 1, mm, mklen, false);
++	}
++#endif
+ 	ti = ovsl_dereference(table->ti);
+ 	table_instance_insert(ti, flow);
+ 	table->count++;
+@@ -1221,12 +1531,49 @@ int ovs_flow_init(void)
  		return -ENOMEM;
  	}
  
@@ -356,6 +422,10 @@ index 898b7b8..633dd7c 100644
 +	/* /sys/kernel/debug/ovs_buckets:當前 flow table 的 bucket-load snapshot(實驗三 Part 3）。 */
 +	ovs_buckets_dentry = debugfs_create_file("ovs_buckets", 0444, NULL,
 +						 NULL, &ovs_buckets_fops);
++
++	/* /sys/kernel/debug/ovs_keydump:flow 插入時 dump masked-key bytes(Part 3 攻擊 A)。 */
++	ovs_keydump_dentry = debugfs_create_file("ovs_keydump", 0644, NULL,
++						 NULL, &ovs_keydump_fops);
 +
 +	/* 一次性印出 sw_flow_key 各區段 offset,供把 hash_len 對回欄位:
 +	 * masked-key range = [rounddown(phy,8), roundup(欄位尾,8)),長度=range_n_bytes。 */
@@ -380,6 +450,7 @@ index 898b7b8..633dd7c 100644
 +	debugfs_remove(ovs_hashlen_dentry);
 +	debugfs_remove(ovs_probelen_dentry);
 +	debugfs_remove(ovs_buckets_dentry);
++	debugfs_remove(ovs_keydump_dentry);
 +#endif
  	kmem_cache_destroy(flow_stats_cache);
  	kmem_cache_destroy(flow_cache);
