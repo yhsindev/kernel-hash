@@ -18,15 +18,15 @@
 ## 原始 snapshot
 
 ```
-# jhash    —— results/part3_buckets_jhash.txt
+# jhash    —— results/ovs/part3_buckets_jhash.txt
 # n_buckets 16384 total_flows 15439 Lmax 7 nonempty 9905 collisions 7458
 0 6479  1 5924  2 2737  3 987  4 214  5 35  6 7  7 1
 
-# hsiphash —— results/part3_buckets_hsiphash.txt
+# hsiphash —— results/ovs/part3_buckets_hsiphash.txt
 # n_buckets 16384 total_flows 15443 Lmax 7 nonempty 10004 collisions 7209
 0 6380  1 5971  2 2924  3 867  4 196  5 40  6 3  7 3
 
-# siphash  —— results/part3_buckets_siphash.txt
+# siphash  —— results/ovs/part3_buckets_siphash.txt
 # n_buckets 16384 total_flows 15443 Lmax 7 nonempty 10007 collisions 7270
 0 6377  1 6011  2 2879  3 855  4 210  5 44  6 7  7 1
 ```

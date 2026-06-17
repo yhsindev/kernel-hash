@@ -23,7 +23,7 @@
 | hsiphash | **1** | 0 | **1** | 16×**不同** | ~**138** cyc（mode 167） | ~78 |
 | siphash | **1** | 0 | **1** | 16×**不同** | ~**205** cyc（mode 234） | ~130 |
 
-raw:`results/part3_{buckets,probe,hashcyc}_attack_{jhash,hsiphash,siphash}.txt`。collisions=C(16,2)=120 對應 jhash 16 條同桶;keyed 兩者 0。
+raw:`results/ovs/part3_{buckets,probe,hashcyc}_attack_{jhash,hsiphash,siphash}.txt`。collisions=C(16,2)=120 對應 jhash 16 條同桶;keyed 兩者 0。
 
 ## 觀察
 

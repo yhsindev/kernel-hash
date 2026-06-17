@@ -13,10 +13,10 @@
 | 〃 支撐 | **文獻基礎**(cited,信心分級) | `notes/related_work.md` | 完成 |
 | 〃 支撐 | **攻擊成本分析**(離線構造牆鐘 + 成本不對稱,實測錨點) | `notes/attack_cost.md` | 完成 |
 | **Part 2** | **通用 hash-table 實驗(主實驗)**:harness + run/parse | `bucket_bench/` | 完成 |
-| 〃 結果 | Part 2 五組 flow set × 三雜湊的分布 | `results/part2_bucket_bench.md` | 完成 |
+| 〃 結果 | Part 2 五組 flow set × 三雜湊的分布 | `results/general/part2_bucket_bench.md` | 完成 |
 | **Part 3** | **OVS case study**:在真實 flow table 驗證 | kernel 樁 `patches/flow_table_debug_instrumentation.diff`(`ovs_probelen` + `ovs_buckets`) | 樁完成 |
-| 〃 結果 | Part 3 OVS 真實表 probe-count baseline(動態) | `results/part3_probe_dv3b.md` | baseline 完成 |
-| 〃 結果 | Part 3 OVS 真實表 bucket-load snapshot(靜態) | `results/part3_buckets_dv3b.md` | baseline 完成(三 backend);攻擊情境 TBD |
+| 〃 結果 | Part 3 OVS 真實表 probe-count baseline(動態) | `results/ovs/part3_probe_dv3b.md` | baseline 完成 |
+| 〃 結果 | Part 3 OVS 真實表 bucket-load snapshot(靜態) | `results/ovs/part3_buckets_dv3b.md` | baseline 完成(三 backend);攻擊情境 TBD |
 
 **三個 Part 一句話**:Part 1 = 數學;Part 2 = 不碰 OVS 的通用主實驗;Part 3 = 拿 OVS 驗證。對應 **RQ1/2/3**(見下,RQ1 通用良性、RQ2 通用攻擊、RQ3 OVS 特例)。
 (命名note:早期曾用「Phase A/B」,已全部併入 Part 1/2/3。)
@@ -77,7 +77,7 @@ kernel 改動在 `kernel_work/`(版控排除),以 patch 留存(`patches/flow_tab
 
 ## 目前進度
 
-- Part 3 的 probe-count instrumentation(`ovs_probelen`)+ table snapshot(`ovs_buckets`)完成;OVS 真實表 jhash baseline(dv3b ~18,785 flows)平均 ~1.05 probes/lookup、max 7(見 `results/part3_probe_dv3b.md`)。
+- Part 3 的 probe-count instrumentation(`ovs_probelen`)+ table snapshot(`ovs_buckets`)完成;OVS 真實表 jhash baseline(dv3b ~18,785 flows)平均 ~1.05 probes/lookup、max 7(見 `results/ovs/part3_probe_dv3b.md`)。
 - 已 reframe 為通用 robustness 研究(本檔);Part 1 formal model 完成(`notes/formal_model.md`);Part 2 generic harness 建好(`bucket_bench/`,module 已 build,待 `sudo ./run_bucket_bench.sh`)。
 - **下一步:(你)讀文獻定稿 §2 `L_max` / §3b √-bound;(回來後)跑 Part 2 harness 取得三雜湊函式 × {random/structured/collision} 的分布數據。**
 

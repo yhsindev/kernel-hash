@@ -24,7 +24,7 @@
 
 ## 模型驗證（已完成）
 
-離線 jhash2(22 words、little-endian、initval=0)對 `results/keydump_dv3b_masked.log` 的 64 筆 (masked-key, kernel hash) 配對:**64/64 完全吻合**。據此:
+離線 jhash2(22 words、little-endian、initval=0)對 `results/ovs/keydump_dv3b_masked.log` 的 64 筆 (masked-key, kernel hash) 配對:**64/64 完全吻合**。據此:
 
 - 當前 backend = jhash(seed-0 jhash2)、masked-key word 佈局 = 22 words 均經確認;
 - 離線模型逐位元忠實 → 搜出的碰撞植入後在真實表會碰撞(消除 `find_jhash_collision.c` 註解所警示的最大風險)。
@@ -36,7 +36,7 @@
 工作負載:K=16 碰撞集(對攻擊規則自身佈局的模板 `attack4_template.txt` 搜出,target `0xcaa92980`),裝成 16 條 `priority=100,ip,nw_proto=17,nw_src,nw_dst,actions=output:2` 規則(不含 NORMAL),`pktgen_pairs.sh` 逐對灌入。
 
 * **同 hash(直接證據)**:植入後抓 keydump,16 條 flow 的 in-kernel `flow_hash` **全部 = `0xcaa92980`**(`grep hash | uniq -c` → `16 hash=0xcaa92980`)。因 `bucket = jhash_1word(0xcaa92980, seed) & (m−1)` 對任意 seed 同值,16 條必落同一桶。此為 §5a seed-independent 走法的真實表實證。
-* **靜態(`ovs_buckets`)**:`# n_buckets 1024 total_flows 17 Lmax 16 nonempty 2 collisions 120`,chain-length 直方圖 = `{0:1022, 1:1, 16:1}` —— **單一桶 chain 長度 = 16**,其餘 ≤1。`collisions=120`=C(16,2) 精確對應 16 條同桶;`H_norm≈0.032`(良性 baseline ~0.94)= 極度集中。對照:17 條若隨機散佈,期望 Lmax ≈ 1–2。(`results/part3_buckets_attack_jhash.txt`)
+* **靜態(`ovs_buckets`)**:`# n_buckets 1024 total_flows 17 Lmax 16 nonempty 2 collisions 120`,chain-length 直方圖 = `{0:1022, 1:1, 16:1}` —— **單一桶 chain 長度 = 16**,其餘 ≤1。`collisions=120`=C(16,2) 精確對應 16 條同桶;`H_norm≈0.032`(良性 baseline ~0.94)= 極度集中。對照:17 條若隨機散佈,期望 Lmax ≈ 1–2。(`results/ovs/part3_buckets_attack_jhash.txt`)
 * **動態(`ovs_probelen`,probe 退化)**:直方圖延伸到 **16**(overflow 0),16 對平均送 → probe 數在 1..16 大致均勻、上限 = K = 16。對照良性 D-v3B baseline(probe max ~7、集中 0–2,見 `part3_probe_dv3b.md`):**單桶 chain 把該桶查找從 O(1) 推到 O(K)**。
 
 結論:離線構造的完整 jhash 碰撞,在真實 OVS kernel datapath 重現為單桶長 chain,靜態(同 hash)與動態(probe 走滿 chain)雙重佐證,且不受隨機 `hash_seed` 影響。

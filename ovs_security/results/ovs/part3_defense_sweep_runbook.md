@@ -7,8 +7,8 @@
 ## §0 一次性前置
 
 直接引用、不重跑:
-- benign bucket-load × 3 backend → `results/part3_buckets_dv3b.md`
-- benign probe × 3 → `results/part3_probe_dv3b.md`
+- benign bucket-load × 3 backend → `results/ovs/part3_buckets_dv3b.md`
+- benign probe × 3 → `results/ovs/part3_probe_dv3b.md`
 - per-hash 微觀成本 × 3(isolated)→ `hash_microbench v6`(88B 內插:jhash≈85、hsiphash≈78、siphash≈130 cyc)
 
 鎖頻(cycle 量測前一次,三輪共用):
@@ -64,9 +64,9 @@ echo 0 | sudo tee /sys/kernel/debug/ovs_probelen >/dev/null
 echo 0 | sudo tee /sys/kernel/debug/ovs_hashcycles >/dev/null
 echo 1 | sudo tee /sys/kernel/debug/ovs_keydump >/dev/null
 DURATION=8 COUNT=500 ./pktgen_pairs.sh /tmp/coll_pairs4.txt
-sudo cat /sys/kernel/debug/ovs_buckets    | tee ~/projects/kernel-hash/ovs_security/results/part3_buckets_attack_$B.txt
-sudo cat /sys/kernel/debug/ovs_probelen   | tee ~/projects/kernel-hash/ovs_security/results/part3_probe_attack_$B.txt
-sudo cat /sys/kernel/debug/ovs_hashcycles | tee ~/projects/kernel-hash/ovs_security/results/part3_hashcyc_attack_$B.txt
+sudo cat /sys/kernel/debug/ovs_buckets    | tee ~/projects/kernel-hash/ovs_security/results/ovs/part3_buckets_attack_$B.txt
+sudo cat /sys/kernel/debug/ovs_probelen   | tee ~/projects/kernel-hash/ovs_security/results/ovs/part3_probe_attack_$B.txt
+sudo cat /sys/kernel/debug/ovs_hashcycles | tee ~/projects/kernel-hash/ovs_security/results/ovs/part3_hashcyc_attack_$B.txt
 sudo dmesg | grep -oE 'hash=0x[0-9a-f]+' | sort | uniq -c | sort -rn | head
 ```
 

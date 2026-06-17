@@ -11,8 +11,8 @@
 ## 狀態
 
 **完成(mask 確證)**。兩份 dump:
-* `results/keydump_dv3b.log` — 192 筆,僅 masked-key(早期 instrumentation)。
-* `results/keydump_dv3b_masked.log` — 64 筆,**含 `ovs_keymask:` mask dump**(instrumentation 加印 `flow->mask->key`)。
+* `results/ovs/keydump_dv3b.log` — 192 筆,僅 masked-key(早期 instrumentation)。
+* `results/ovs/keydump_dv3b_masked.log` — 64 筆,**含 `ovs_keymask:` mask dump**(instrumentation 加印 `flow->mask->key`)。
 
 以 `scripts/parse_ovs_keydump.py` 分組、解碼、統計 mask pattern。layout 對應已完整驗證,且 `00` 的 wildcard/真值歧義已由 mask 確證消除(見下)。
 
