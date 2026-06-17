@@ -35,3 +35,6 @@ ovs_datapath_bench/results/**/perf_report_*.txt
 # OVS attack tool: compiled binary + per-run collision key dump (regenerable)
 ovs_security/attack/find_jhash_collision
 ovs_security/attack/keys.txt
+
+# Part 3 attack: raw keydump debug captures (regenerable; keep templates + result summaries)
+ovs_security/results/keydump_attack*.log

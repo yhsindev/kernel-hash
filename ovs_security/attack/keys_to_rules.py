@@ -95,7 +95,7 @@ def main():
     ap = argparse.ArgumentParser(description="碰撞 key → OF 規則 + 封包配對")
     ap.add_argument("keys")
     ap.add_argument("--template", required=True)
-    ap.add_argument("--in-port", type=int, default=6)
+    ap.add_argument("--in-port", type=int, default=-1)
     ap.add_argument("--out-port", type=int, default=2)
     ap.add_argument("--priority", type=int, default=100)
     ap.add_argument("--bridge", default="br0")
@@ -127,11 +127,12 @@ def main():
           file=sys.stderr)
 
     # ---- 產出 ----
+    inport = f"in_port={a.in_port}," if a.in_port >= 0 else ""
     rules, pairs = [], []
     for k in keys:
         sip, dip = ip_of(k[VAR_WORDS[0]]), ip_of(k[VAR_WORDS[1]])
-        rules.append(f"priority={a.priority},ip,nw_proto=17,nw_src={sip},nw_dst={dip},"
-                     f"in_port={a.in_port},actions=output:{a.out_port}")
+        rules.append(f"priority={a.priority},ip,nw_proto=17,{inport}nw_src={sip},nw_dst={dip},"
+                     f"actions=output:{a.out_port}")
         pairs.append(f"{sip} {dip}")
 
     rule_text = "\n".join(rules) + "\n"

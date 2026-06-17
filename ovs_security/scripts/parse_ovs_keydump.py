@@ -136,6 +136,11 @@ def main():
     records = parse(path)
     groups = group(records)
 
+    if not records:
+        print(f"# {path}: 0 records — log 為空。擷取時要有流量觸發 flow 插入"
+              f"(pktgen 須在送、且 keydump 額度未耗盡)。", file=sys.stderr)
+        sys.exit(1)
+
     if "--template" in args:
         # 取最大 group 出模板
         recs = max(groups.values(), key=len)
