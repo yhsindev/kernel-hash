@@ -1474,57 +1474,64 @@ Part 2(n=m=4096,α=1):
 
 入口/狀態:`ovs_security/README.md`(文件地圖、3 Part);Part 1 數學 `notes/formal_model.md`;文獻 `notes/related_work.md`;Part 2 完成 `results/part2_bucket_bench.md`;Part 3 樁 `ovs_probelen`+`ovs_buckets`(patch),OVS baseline `results/part3_probe_dv3b.md`。模組 backend 目前 jhash(srcversion 變動,用 `nm -u` 認)。
 
-# Checkout 2026-06-17（涵蓋 6/16–6/17 兩天)
+## 2026-06-17 — Check-out:Part 3 攻擊重現 + 三雜湊防禦對照 + 檔案整理(涵蓋 6/16–6/17)
 
-補一份兩天的總結(中間漏了 check-in)。主軸:把 Part 3 從「baseline」推進到「攻擊在真實 OVS 重現 + 三雜湊防禦對照 + per-hash 成本」,並整理檔案結構。
+補一份兩天的總結(中間漏了 6/16 check-in / check-out)。主軸:把 Part 3 從「baseline」推進到「攻擊在真實 OVS 重現 + 三雜湊防禦對照 + per-hash 成本」,並整理檔案結構。
 
-## 完成的事
+### 今日完成
+- **masked-key layout 定案(mask 確證)**:`ovs_keydump` 解析 D-v3B 的 flow_hash 輸入 = `(start=296, len=88)` = 22 個 u32;欄位 offset(port 在 IPv4 位址前)、三類位元組(固定常數/wildcard/可控)全部對上;加印 `ovs_keymask` 消除「`00` 是真值還是 wildcard」歧義。(`results/ovs/part3_keydump_layout.md`)
+- **離線 jhash 模型驗證**:offline jhash2(22 words, LE, init0)對 64 筆真實 (masked-key, kernel hash) 64/64 吻合。
+- **攻擊在真實 OVS 重現(K=16)**:`results/ovs/part3_attack_collision.md`。
+- **防禦掃描(3 backend × attack)**:`results/ovs/part3_defense_sweep.md`。
+- **instrumentation 新增**(`patches/flow_table_debug_instrumentation.diff`):`ovs_keymask`(dump mask bytes)、`ovs_hashcycles`(`flow_hash` in-context cycle 直方圖,rdtsc_ordered 夾 call site、atomic64、讀時空 rdtsc 對校正)、keyed-hash 金鑰改 **per-boot 隨機**(`get_random_bytes`,比照 `ti->hash_seed`)。
+- **工具鏈**:`find_jhash_collision`(`--base` 吃模板、var=[20,2)、進度心跳)、`keys_to_rules.py`(含驗證閘、`--in-port` 預設 -1)、`pktgen_pairs.sh`(逐對固定送)、`parse_ovs_keydump.py`(`--template`)、`plot_part3.py`(5 張圖)。
+- **檔案整理**:清 ~14 個 scratch/編譯/debug 檔;`results/` 切成 `general/`(Part 2)+ `ovs/`(Part 3)+ `figs/`,引用/README/plot/runbook 路徑同步更新。
 
-1. **masked-key layout 定案(mask 確證)**
-   - `ovs_keydump` 解析:D-v3B 的 flow_hash 輸入 = `(start=296, len=88)` = 22 個 u32;欄位 offset(port 排在 IPv4 位址前)、三類位元組(固定常數/wildcard/可控)全部對上。
-   - 加印 `ovs_keymask`(dump `flow->mask->key`)→ 消除「`00` 是真值還是 wildcard」歧義。
-   - 結果:`results/ovs/part3_keydump_layout.md`。
+### 關鍵結果
+- **jhash**:`Lmax=16` / probe→16 / 16 條 flow 的 in-kernel hash 全 = `0xcaa92980` / `collisions=120`=C(16,2) —— 單一桶長 chain。
+- **hsiphash & siphash**:同一組 keys4 散開,`Lmax=1` / probe=1 / 16×不同 hash。
+- **in-context per-hash**(`ovs_hashcycles`,鎖頻、mode−overhead):jhash 134 ≈ hsiphash 138 < siphash 205 cyc;siphash/jhash≈1.53,與 `hash_microbench v6`(88B 內插 85/78/130)比值一致。
 
-2. **離線 jhash 模型驗證**:offline jhash2(22 words, LE, init0)對 64 筆真實 (masked-key, kernel hash) **64/64 完全吻合** → 確認 backend=jhash、模型逐位元忠實,搜出的碰撞植入後會在真實表碰撞。
+### 目前判斷
+- 防禦來自(per-boot 隨機)**金鑰**,與 round 數無關:hsiphash 在 x86-64 = **SipHash-1-3**,防禦幾乎零 per-hash 成本;siphash +50%。固定 per-hash 開銷遠小於它擋掉的 chain-walk。
+- 兩段雜湊樞紐:`bucket = jhash_1word(flow_hash(key), random_seed) & (m-1)`;完整 32-bit 碰撞 → seed/resize 無關地落同桶,攻擊面在無祕密的第 1 段(`flow_hash`)。
+- Part 3 實證完整(baseline + attack + defense + cost)。
+- 過程教訓(已存記憶):手動 `ovs-dpctl del-flows` 破壞 dpif 同步(需 restart vswitchd);OF in_port ≠ dp in_port(規則別 match in_port);NORMAL 的 MAC learning 讓模板飄(攻擊規則移除 NORMAL);restart vswitchd 後 `ovs_dbg_tbl` 掉 NULL(需 reload);`ovs_hashcycles` per-cpu 8KB 陣列 → insmod ENOMEM,改 atomic64。
 
-3. **攻擊在真實 OVS 重現**(`results/ovs/part3_attack_collision.md`)
-   - K=16 jhash 碰撞集植入 → 16 條 flow 的 in-kernel `flow_hash` 全 = `0xcaa92980` → 單一桶 chain=16、`ovs_probelen` probe 走到 16、collisions=120=C(16,2)。
-   - 兩段雜湊樞紐:`bucket = jhash_1word(flow_hash(key), random_seed) & (m-1)`;完整 32-bit 碰撞 → seed/resize 無關地落同桶(攻擊面在無祕密的第 1 段)。
+### 未解問題
+- K=16 為結構性 demo;OVS megaflow mask 限制可控 entropy budget,規模化(大 K)意義有限,未掃。
+- hsiphash 安全性具**平台依賴**:x86-64 = SipHash-1-3(強)、32-bit = HalfSipHash1-3(弱),結論限 64-bit。
+- 報告尚未開始整理;jq 第二案例尚未開。
+- 5 張圖為初版、未 track,待精修。
 
-4. **防禦掃描(3 backend × attack)**(`results/ovs/part3_defense_sweep.md`)
-   - 同一組 keys4:jhash `Lmax=16`/probe=16/16×同 hash;**hsiphash、siphash 散開** `Lmax=1`/probe=1/16×不同 hash。防禦來自(per-boot 隨機)金鑰。
-   - in-context per-hash(`ovs_hashcycles`,rdtsc_ordered 夾 flow_hash、鎖頻、mode−overhead):**jhash 134 ≈ hsiphash 138 < siphash 205 cyc**;siphash/jhash≈1.53 與 microbench(`hash_microbench v6`,88B 內插 85/78/130)比值一致。
-   - 重點:hsiphash 在 x86-64 = **SipHash-1-3**(非 HalfSipHash),防禦幾乎零 per-hash 成本;siphash +50%。固定 per-hash 開銷遠小於擋掉的 chain-walk。
+### 下一步
+- 整理完整報告(Part 1 模型 → Part 2 generic → Part 3 baseline + attack + defense + cost)。
+- 延伸:從 jq CVE-2026-40164 出發的 generic hash-table robustness workflow(判定 checklist:untrusted input 可達性 + mapping 可預測性 + entropy budget),OVS = hard case、jq = easy case 對照。
 
-## instrumentation 新增（patch:`patches/flow_table_debug_instrumentation.diff`)
+### 文件與資料狀態
+- 結果:`results/general/`(Part 2)、`results/ovs/`(Part 3:baseline/attack/defense/keydump/logs)、`results/figs/`(plot 產圖,gitignored 未 track)。
+- instrumentation:`patches/flow_table_debug_instrumentation.diff`(含 keymask/hashcycles/隨機金鑰;`kernel_work/` 本身 gitignore)。
+- 工具:`attack/`(`find_jhash_collision.c`、`keys_to_rules.py`、templates、`keys4.txt`)、`scripts/`(`parse_ovs_buckets`、`parse_ovs_keydump`、`plot_part3`)。
+- git:已 commit 至 6/17 reorg(`07b10b0`),未 push;模組 backend 目前 jhash 預設(srcversion 變動,用 `nm -u` 認)。
 
-- `ovs_keymask`:dump mask bytes。
-- `ovs_hashcycles`:`flow_hash` 的 in-context cycle 直方圖(rdtsc_ordered 夾 call site、atomic64、讀時跑空 rdtsc 對校正)。
-- keyed-hash 金鑰改 **per-boot 隨機**(`get_random_bytes`,比照 `ti->hash_seed`)→ 部署等級條件,且實證金鑰 const-ness 不影響 per-hash cycle。
+## 2026-06-18 — Check-in:整理完整報告骨架
 
-## 工具鏈（`attack/`、`scripts/`、`ovs_datapath_bench/scripts/`)
+### 今日方向
+- Part 3 實證已完整(baseline + attack + defense + per-hash cost),今日從「做實驗」轉向「把散落的 results 收斂成報告」:先立骨架與證據對照,不寫內文、不跑新實驗。
 
-- `find_jhash_collision`:加 `--base`(吃真實模板)、OVS 預設 var=[20,2)=src_ip+dst_ip、進度心跳。
-- `keys_to_rules.py`:key→OF 規則 + 配對,含驗證閘(固定 word 吻合模板 + jhash2 全等);`--in-port` 預設 -1(不寫,避開 OF/dp 埠號不符)。
-- `pktgen_pairs.sh`:逐對固定送(範圍隨機無法產生特定配對)。
-- `parse_ovs_keydump.py`:`--template` 萃模板、解碼、空輸入優雅報錯。
-- `plot_part3.py`:5 張圖(probe 分佈 / cycle 分佈 / microbench / summary / bucket 散布)。
+### 今日任務
+1. 列報告章節骨架:Part 1 形式化模型 → Part 2 generic harness → Part 3 OVS case study(baseline / attack / defense / cost);每章標明對應的 `results/general`、`results/ovs` 檔與 `results/figs` 圖。
+2. 做 RQ1/2/3 ↔ 證據對照(哪張圖、哪個指標回答哪個 RQ),檢查有無「有宣稱但缺數據/圖」的缺口。
+3.(次要)5 張圖精修:標籤/字級、是否要 log 軸與中文圖說。
 
-## 踩到的坑（教訓,已記)
+### 今日不做
+- 不開 jq 第二案例(等骨架定了再延伸)。
+- 不跑新實驗、不掃大 K、不動 kernel。
 
-- **手動 `ovs-dpctl del-flows`** 破壞 dpif 同步(ENOENT、flow 裝不進去)→ 需 restart vswitchd;勿手動刪 datapath flow。
-- **OF in_port ≠ dp in_port** → 規則別 match in_port。
-- **NORMAL 的 MAC learning** 讓 eth.src 時而 unwildcard、模板飄 → 攻擊規則移除 NORMAL。
-- **restart ovs-vswitchd 後 `ovs_dbg_tbl` 掉 NULL** → `ovs_buckets` 壞,需 reload 模組重建。
-- **`ovs_hashcycles` 用 per-cpu 8KB 陣列** → insmod ENOMEM(超 PERCPU_MODULE_RESERVE)→ 改 atomic64。
+### 成功標準
+- 最低:章節骨架成形,每章列出對應的 results 檔與圖。
+- 中等:RQ1/2/3 ↔ 證據對照表完成,缺口標清楚。
+- 高:Part 3 各節可開始填初稿,圖精修到可直接放進報告。
 
-## 整理
-
-- 清掉 ~14 個 scratch/編譯/debug 檔。
-- `results/` 切成 `general/`(Part 2)+ `ovs/`(Part 3)+ `figs/`;引用、README 路徑、plot/runbook 路徑同步更新。未來加 jq 案例直接開 `results/jq/`。
-
-## 下一步
-
-1. 整理完整報告(Part 1 模型 → Part 2 generic → Part 3 baseline+attack+defense+cost)。
-2. 延伸:從 jq CVE-2026-40164 出發的 generic hash-table robustness workflow(判定 checklist:untrusted input 可達性 + mapping 可預測性 + entropy budget),OVS=hard case、jq=easy case 對照。
-3. 圖再精修(目前 5 張為初版,未 track)。
+### 預設下一步
+- 骨架定後逐章填內文;再評估 jq 案例與 generic robustness workflow checklist 放在報告何處。
