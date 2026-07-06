@@ -185,6 +185,7 @@ sudo modprobe -r openvswitch             # 再卸一次
 ```bash
 cd ~/projects/kernel-hash/kernel_work/linux-hwe-6.8-6.8.0
 ```
+
 insmod 不會自動處理 dependencies，因此先預載 openvswitch.ko 需要的 modules。
 
 ```bash

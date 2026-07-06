@@ -29,7 +29,7 @@
 #include <time.h>
 #include <getopt.h>
 
-/* ---- 核心 jhash.h 逐字移植(seed=0)---- */
+/* ---- 核心內 jhash.h(seed=0)---- */
 #define JHASH_INITVAL 0xdeadbeef
 static inline uint32_t rol32(uint32_t w, unsigned int s)
 {
